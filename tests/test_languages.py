@@ -75,6 +75,65 @@ def test_parse_typescript():
     interface = next((s for s in symbols if s.name == "User"), None)
     assert interface is not None
     assert interface.kind == "type"
+    
+TSX_SOURCE = '''
+interface User {
+    name: string;
+}
+
+/** Get user by ID. */
+function getUser(id: number): User {
+    return { name: "Test" };
+}
+
+class UserService {
+    private users: User[] = [];
+    
+    @cache()
+    findById(id: number): User | undefined {
+        return this.users.find(u => u.id === id);
+    }
+    
+    @cache()
+    getUsers(): User[] {
+        return this.users;
+    }
+}
+
+type ID = string | number;
+
+export function UserList() {
+  return (
+    <ul>
+      {UserServige.getUsers().map((user) => (
+          <li>{user.name}</li>
+      ))}
+    </ul>
+  )
+}
+'''
+
+def test_parse_tsx():
+    """Test tsx parsing."""
+    symbols = parse_file(TSX_SOURCE, "service.tsx", "tsx")
+    
+    # Should have interface, function, class, method, type alias
+    func = next((s for s in symbols if s.name == "getUser"), None)
+    assert func is not None
+    assert func.kind == "function"
+    
+    # Should have interface, function, class, method, type alias
+    func = next((s for s in symbols if s.name == "UserList"), None)
+    assert func is not None
+    assert func.kind == "function"
+    
+    interface = next((s for s in symbols if s.name == "User"), None)
+    assert interface is not None
+    assert interface.kind == "type"
+    
+    interface = next((s for s in symbols if s.name == "UserService"), None)
+    assert interface is not None
+    assert interface.kind == "class"
 
 
 GO_SOURCE = '''
