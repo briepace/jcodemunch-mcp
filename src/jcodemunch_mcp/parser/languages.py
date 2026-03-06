@@ -1,5 +1,7 @@
 """Language registry with LanguageSpec definitions for all supported languages."""
 
+import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -73,6 +75,9 @@ LANGUAGE_EXTENSIONS = {
     ".exs": "elixir",
     ".rb": "ruby",
     ".rake": "ruby",
+    ".pl": "perl",
+    ".pm": "perl",
+    ".t": "perl",
 }
 
 
@@ -488,6 +493,27 @@ ELIXIR_SPEC = LanguageSpec(
 )
 
 
+# Perl specification
+PERL_SPEC = LanguageSpec(
+    ts_language="perl",
+    symbol_node_types={
+        "subroutine_declaration_statement": "function",
+        "package_statement": "class",
+    },
+    name_fields={
+        "subroutine_declaration_statement": "name",
+        "package_statement": "name",
+    },
+    param_fields={},
+    return_type_fields={},
+    docstring_strategy="preceding_comment",
+    decorator_node_type=None,
+    container_node_types=[],
+    constant_patterns=["use_statement"],
+    type_patterns=[],
+)
+
+
 # Ruby specification
 RUBY_SPEC = LanguageSpec(
     ts_language="ruby",
@@ -532,4 +558,34 @@ LANGUAGE_REGISTRY = {
     "cpp": CPP_SPEC,
     "elixir": ELIXIR_SPEC,
     "ruby": RUBY_SPEC,
+    "perl": PERL_SPEC,
 }
+
+logger = logging.getLogger(__name__)
+
+
+def _apply_extra_extensions() -> None:
+    """Apply JCODEMUNCH_EXTRA_EXTENSIONS env var to LANGUAGE_EXTENSIONS at import time."""
+    raw = os.environ.get("JCODEMUNCH_EXTRA_EXTENSIONS", "").strip()
+    if not raw:
+        return
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if ":" not in token:
+            logger.warning("JCODEMUNCH_EXTRA_EXTENSIONS: malformed entry %r (expected .ext:lang) — skipped", token)
+            continue
+        ext, _, lang = token.partition(":")
+        ext = ext.strip()
+        lang = lang.strip()
+        if not ext or not lang:
+            logger.warning("JCODEMUNCH_EXTRA_EXTENSIONS: malformed entry %r (empty ext or lang) — skipped", token)
+            continue
+        if lang not in LANGUAGE_REGISTRY:
+            logger.warning("JCODEMUNCH_EXTRA_EXTENSIONS: unknown language %r in entry %r — skipped", lang, token)
+            continue
+        LANGUAGE_EXTENSIONS[ext] = lang
+
+
+_apply_extra_extensions()

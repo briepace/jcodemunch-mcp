@@ -213,7 +213,7 @@ async def list_tools() -> list[Tool]:
                     "language": {
                         "type": "string",
                         "description": "Optional filter by language",
-                        "enum": ["python", "javascript", "typescript", "go", "rust", "java", "php", "dart", "csharp", "c", "cpp", "swift", "elixir", "ruby"]
+                        "enum": ["python", "javascript", "typescript", "go", "rust", "java", "php", "dart", "csharp", "c", "cpp", "swift", "elixir", "ruby", "perl"]
                     },
                     "max_results": {
                         "type": "integer",
@@ -423,6 +423,10 @@ def main(argv: Optional[list[str]] = None):
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         handlers=handlers,
     )
+
+    extra_ext = os.environ.get("JCODEMUNCH_EXTRA_EXTENSIONS", "")
+    if extra_ext:
+        logging.getLogger(__name__).info("JCODEMUNCH_EXTRA_EXTENSIONS: %s", extra_ext)
 
     asyncio.run(run_server())
 

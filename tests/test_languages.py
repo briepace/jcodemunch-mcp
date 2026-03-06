@@ -1054,3 +1054,65 @@ def test_parse_ruby():
     assert "Top-level" in fmt.docstring
 
 
+PERL_SOURCE = '''
+package Animal;
+
+# Create a new Animal
+sub new {
+    my ($class, %args) = @_;
+    return bless \\%args, $class;
+}
+
+=pod
+
+=head1 describe
+
+Returns a description of the animal.
+
+=cut
+
+sub describe {
+    my $self = shift;
+    return "$self->{name} is a $self->{species}";
+}
+
+use constant MAX_LEGS => 4;
+use constant KINGDOM => "Animalia";
+
+package main;
+
+sub run {
+    my $animal = Animal->new(name => "Dog", species => "Canis");
+    print $animal->describe();
+}
+'''
+
+
+def test_parse_perl():
+    """Test Perl parsing."""
+    symbols = parse_file(PERL_SOURCE, "sample.pl", "perl")
+    assert len(symbols) > 0
+
+    # Packages
+    animal_pkg = next((s for s in symbols if s.name == "Animal"), None)
+    assert animal_pkg is not None
+    assert animal_pkg.kind == "class"
+
+    # Subroutines
+    new_sub = next((s for s in symbols if s.name == "new"), None)
+    assert new_sub is not None
+    assert new_sub.kind == "function"
+    assert "Create a new Animal" in new_sub.docstring
+
+    describe_sub = next((s for s in symbols if s.name == "describe"), None)
+    assert describe_sub is not None
+    assert "Returns a description" in describe_sub.docstring
+
+    # Constants
+    max_legs = next((s for s in symbols if s.name == "MAX_LEGS"), None)
+    assert max_legs is not None
+    assert max_legs.kind == "constant"
+
+    kingdom = next((s for s in symbols if s.name == "KINGDOM"), None)
+    assert kingdom is not None
+    assert kingdom.kind == "constant"

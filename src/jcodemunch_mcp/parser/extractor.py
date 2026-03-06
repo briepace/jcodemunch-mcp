@@ -572,7 +572,7 @@ def _extract_preceding_comments(node, source_bytes: bytes) -> str:
     prev = node.prev_named_sibling
     while prev and prev.type in ("annotation", "marker_annotation"):
         prev = prev.prev_named_sibling
-    while prev and prev.type in ("comment", "line_comment", "block_comment", "documentation_comment"):
+    while prev and prev.type in ("comment", "line_comment", "block_comment", "documentation_comment", "pod"):
         comment_text = source_bytes[prev.start_byte:prev.end_byte].decode("utf-8")
         comments.insert(0, comment_text)
         prev = prev.prev_named_sibling
@@ -586,31 +586,42 @@ def _extract_preceding_comments(node, source_bytes: bytes) -> str:
 
 def _clean_comment_markers(text: str) -> str:
     """Clean comment markers from docstring."""
+    # POD block: strip directive lines (=pod, =head1, =cut, etc.), keep content
+    if text.lstrip().startswith("="):
+        content_lines = []
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("="):
+                continue
+            content_lines.append(stripped)
+        return "\n".join(content_lines).strip()
+
     lines = text.split("\n")
     cleaned = []
-    
     for line in lines:
         line = line.strip()
-        # Remove leading comment markers
+        # Remove leading comment markers (order matters: longer prefixes first)
         if line.startswith("/**"):
             line = line[3:]
-        elif line.startswith("/*"):
-            line = line[2:]
+        elif line.startswith("//!"):
+            line = line[3:]
         elif line.startswith("///"):
             line = line[3:]
         elif line.startswith("//"):
             line = line[2:]
-        elif line.startswith("//!"):
-            line = line[3:]
+        elif line.startswith("/*"):
+            line = line[2:]
         elif line.startswith("*"):
             line = line[1:]
-        
+        elif line.startswith("#"):
+            line = line[1:]
+
         # Remove trailing */
         if line.endswith("*/"):
             line = line[:-2]
-        
+
         cleaned.append(line.strip())
-    
+
     return "\n".join(cleaned).strip()
 
 
@@ -766,6 +777,36 @@ def _extract_constant(
                     byte_length=node.end_byte - node.start_byte,
                     content_hash=c_hash,
                 )
+
+    # Perl: use constant NAME => value
+    if node.type == "use_statement":
+        children = list(node.children)
+        if len(children) >= 3 and children[1].type == "package":
+            pkg_name = source_bytes[children[1].start_byte:children[1].end_byte].decode("utf-8")
+            if pkg_name == "constant":
+                for child in children:
+                    if child.type == "list_expression" and child.child_count >= 1:
+                        name_node = child.children[0]
+                        if name_node.type == "autoquoted_bareword":
+                            name = source_bytes[name_node.start_byte:name_node.end_byte].decode("utf-8")
+                            if name.isupper() or (len(name) > 1 and name[0].isupper()):
+                                sig = source_bytes[node.start_byte:node.end_byte].decode("utf-8").strip()
+                                const_bytes = source_bytes[node.start_byte:node.end_byte]
+                                c_hash = compute_content_hash(const_bytes)
+                                return Symbol(
+                                    id=make_symbol_id(filename, name, "constant"),
+                                    file=filename,
+                                    name=name,
+                                    qualified_name=name,
+                                    kind="constant",
+                                    language=language,
+                                    signature=sig[:100],
+                                    line=node.start_point[0] + 1,
+                                    end_line=node.end_point[0] + 1,
+                                    byte_offset=node.start_byte,
+                                    byte_length=node.end_byte - node.start_byte,
+                                    content_hash=c_hash,
+                                )
 
     # Swift: let MAX_SPEED = 100  (property_declaration with let binding)
     if node.type == "property_declaration":

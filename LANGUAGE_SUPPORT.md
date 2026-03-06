@@ -110,3 +110,21 @@ print_tree(tree.root_node)
 ```
 
 This inspection process helps identify the correct `symbol_node_types`, `name_fields`, and extraction rules when adding support for a new language.
+
+
+## Configuration
+
+### `JCODEMUNCH_EXTRA_EXTENSIONS`
+
+Map additional file extensions to languages at startup without modifying source:
+
+```
+JCODEMUNCH_EXTRA_EXTENSIONS=".cgi:perl,.psgi:perl,.mjs:javascript"
+```
+
+- Comma-separated `.ext:lang` pairs
+- Overrides built-in mappings on collision
+- Unknown languages and malformed entries are skipped with a warning
+- Valid language names: `python`, `javascript`, `typescript`, `go`, `rust`, `java`, `php`, `dart`, `csharp`, `c`, `cpp`, `swift`, `elixir`, `ruby`, `perl`
+
+Set via `.mcp.json` `env` block or any environment mechanism supported by your MCP client.
