@@ -292,3 +292,18 @@ def should_exclude_file(
         return "binary_extension"
 
     return None
+
+
+# Shared skip patterns used by both index_folder and index_repo.
+# Keep a single source of truth here.
+SKIP_PATTERNS = [
+    "node_modules/", "vendor/", "venv/", ".venv/", "__pycache__/",
+    "dist/", "build/", ".git/", ".tox/", ".mypy_cache/",
+    "target/",
+    ".gradle/",
+    "test_data/", "testdata/", "fixtures/", "snapshots/",
+    "migrations/",
+    ".min.js", ".min.ts", ".bundle.js",
+    "package-lock.json", "yarn.lock", "go.sum",
+    "generated/", "proto/",
+]

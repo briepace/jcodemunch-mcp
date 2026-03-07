@@ -51,12 +51,13 @@ class CodeIndex:
     git_head: str = ""           # HEAD commit hash at index time (for git repos)
     file_summaries: dict[str, str] = field(default_factory=dict)  # file_path -> summary
 
+    def __post_init__(self) -> None:
+        # Build O(1) lookup dict once at load time
+        self._symbol_index: dict[str, dict] = {s["id"]: s for s in self.symbols if "id" in s}
+
     def get_symbol(self, symbol_id: str) -> Optional[dict]:
-        """Find a symbol by ID."""
-        for sym in self.symbols:
-            if sym.get("id") == symbol_id:
-                return sym
-        return None
+        """Find a symbol by ID (O(1))."""
+        return self._symbol_index.get(symbol_id)
 
     def search(self, query: str, kind: Optional[str] = None, file_pattern: Optional[str] = None) -> list[dict]:
         """Search symbols with weighted scoring."""
@@ -270,9 +271,13 @@ class IndexStore:
             file_summaries=data.get("file_summaries", {}),
         )
 
-    def get_symbol_content(self, owner: str, name: str, symbol_id: str) -> Optional[str]:
-        """Read symbol source using stored byte offsets."""
-        index = self.load_index(owner, name)
+    def get_symbol_content(self, owner: str, name: str, symbol_id: str, _index: Optional["CodeIndex"] = None) -> Optional[str]:
+        """Read symbol source using stored byte offsets.
+
+        Pass _index to avoid a redundant load_index() call when the caller
+        already holds a loaded index.
+        """
+        index = _index or self.load_index(owner, name)
         if not index:
             return None
 

@@ -1,6 +1,5 @@
 """Index local folder tool - walk, parse, summarize, save."""
 
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -22,23 +21,11 @@ from ..security import (
     should_exclude_file,
     DEFAULT_MAX_FILE_SIZE,
     get_max_index_files,
+    SKIP_PATTERNS,
 )
 from ..storage import IndexStore
+from ..storage.index_store import _file_hash
 from ..summarizer import summarize_symbols
-
-
-# File patterns to skip (sync with index_repo.py)
-SKIP_PATTERNS = [
-    "node_modules/", "vendor/", "venv/", ".venv/", "__pycache__/",
-    "dist/", "build/", ".git/", ".tox/", ".mypy_cache/",
-    "target/",
-    ".gradle/",
-    "test_data/", "testdata/", "fixtures/", "snapshots/",
-    "migrations/",
-    ".min.js", ".min.ts", ".bundle.js",
-    "package-lock.json", "yarn.lock", "go.sum",
-    "generated/", "proto/",
-]
 
 
 def should_skip_file(path: str) -> bool:
@@ -430,7 +417,7 @@ def index_folder(
         # Track hashes for all discovered source files so incremental change detection
         # does not repeatedly report no-symbol files as "new".
         file_hashes = {
-            fp: hashlib.sha256(content.encode("utf-8")).hexdigest()
+            fp: _file_hash(content)
             for fp, content in current_files.items()
         }
         store.save_index(

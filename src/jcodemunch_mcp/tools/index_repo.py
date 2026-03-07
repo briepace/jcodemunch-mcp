@@ -11,23 +11,9 @@ import httpx
 from collections import defaultdict
 
 from ..parser import parse_file, LANGUAGE_EXTENSIONS, get_language_for_path
-from ..security import is_secret_file, is_binary_extension, get_max_index_files
+from ..security import is_secret_file, is_binary_extension, get_max_index_files, SKIP_PATTERNS
 from ..storage import IndexStore
 from ..summarizer import summarize_symbols, generate_file_summaries
-
-
-# File patterns to skip
-SKIP_PATTERNS = [
-    "node_modules/", "vendor/", "venv/", ".venv/", "__pycache__/",
-    "dist/", "build/", ".git/", ".tox/", ".mypy_cache/",
-    "target/",
-    ".gradle/",
-    "test_data/", "testdata/", "fixtures/", "snapshots/",
-    "migrations/",
-    ".min.js", ".min.ts", ".bundle.js",
-    "package-lock.json", "yarn.lock", "go.sum",
-    "generated/", "proto/",
-]
 
 
 def parse_github_url(url: str) -> tuple[str, str]:
