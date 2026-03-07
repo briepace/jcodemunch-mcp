@@ -27,6 +27,21 @@ Precision context beats brute-force context.
 [![PyPI version](https://img.shields.io/pypi/v/jcodemunch-mcp)](https://pypi.org/project/jcodemunch-mcp/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/jcodemunch-mcp)](https://pypi.org/project/jcodemunch-mcp/)
 
+> ## Commercial licenses
+> jCodeMunch-MCP is **free for non-commercial use**.  Tip jar: (https://gravelle.gumroad.com/coffee)
+> 
+> **Commercial use requires a paid license.**
+>
+> **jCodeMunch-only licenses**
+> - [Builder](https://gravelle.gumroad.com/l/jCodeMunchMCP_builder) — 1 developer
+> - [Studio](https://gravelle.gumroad.com/l/jCodeMunchMCP_studio) — up to 5 developers
+> - [Platform](https://gravelle.gumroad.com/l/jCodeMunchMCP_platform) — org-wide internal deployment
+>
+> **Want both code and docs retrieval?**
+> - [Munch Duo Builder Bundle](https://gravelle.gumroad.com/l/MunchDuoBuilderBundle)
+> - [Munch Duo Studio Bundle](https://gravelle.gumroad.com/l/MunchDuoStudioBundle)
+> - [Munch Duo Platform Bundle](https://gravelle.gumroad.com/l/MunchDuoPlatformBundle)
+
 **Stop dumping files into context windows. Start retrieving exactly what the agent needs.**
 
 jCodeMunch indexes a codebase once using tree-sitter AST parsing, then allows MCP-compatible agents (Claude Desktop, VS Code, Google Antigravity, and others) to **discover and retrieve code by symbol** instead of brute-reading files.
