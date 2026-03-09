@@ -478,6 +478,7 @@ For **LM Studio**, ensure the Local Server is running (usually on port 1234):
 | `OPENAI_MAX_TOKENS`         | Max output tokens per batch response (default: `500`) | No |
 | `CODE_INDEX_PATH`           | Custom cache path         | No       |
 | `JCODEMUNCH_MAX_INDEX_FILES`| Maximum files to index per repo/folder (default: `10000`) | No |
+| `JCODEMUNCH_CONTEXT_PROVIDERS` | Set to `0` to disable context providers (dbt, etc.) during indexing | No |
 | `JCODEMUNCH_SHARE_SAVINGS`  | Set to `0` to disable anonymous community token savings reporting | No       |
 | `JCODEMUNCH_LOG_LEVEL`      | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `WARNING`) | No       |
 | `JCODEMUNCH_LOG_FILE`       | Path to log file. If unset, logs go to stderr. Use a file to avoid polluting MCP stdio. | No       |

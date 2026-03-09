@@ -360,7 +360,7 @@ models:
         assert "order_id" in ctx.properties
 
     def test_get_file_context_by_stem(self, tmp_path):
-        """Matches by file stem regardless of directory path."""
+        """Matches by file stem within model directories."""
         root = _create_dbt_project(tmp_path)
         models_dir = root / "models"
         models_dir.mkdir()
@@ -374,10 +374,35 @@ models:
         provider.detect(root)
         provider.load(root)
 
-        # Different directory prefixes, same stem
+        # Within models directory — matches by stem
         assert provider.get_file_context("models/my_model.sql") is not None
         assert provider.get_file_context("models/staging/my_model.sql") is not None
-        assert provider.get_file_context("my_model.sql") is not None
+
+    def test_get_file_context_outside_model_path(self, tmp_path):
+        """Files outside model directories are not matched, even if stem matches."""
+        root = _create_dbt_project(tmp_path)
+        models_dir = root / "models"
+        models_dir.mkdir()
+        _write_schema_yml(models_dir / "schema.yml", """
+models:
+  - name: my_model
+    description: "Should not match outside models/"
+  - name: schema
+    description: "A model named schema"
+""")
+
+        provider = DbtContextProvider()
+        provider.detect(root)
+        provider.load(root)
+
+        # Outside models/ — should not match
+        assert provider.get_file_context("my_model.sql") is None
+        assert provider.get_file_context("scripts/my_model.sql") is None
+        assert provider.get_file_context("schema.sql") is None
+
+        # Inside models/ — should match
+        assert provider.get_file_context("models/my_model.sql") is not None
+        assert provider.get_file_context("models/schema.sql") is not None
 
     def test_get_file_context_no_match(self, tmp_path):
         root = _create_dbt_project(tmp_path)

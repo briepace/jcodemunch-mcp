@@ -60,6 +60,17 @@ models:
 
 Doc references (`{{ doc('name') }}`) are resolved automatically.
 
+### How It Matches Files
+
+The provider matches indexed files to dbt models by **file stem** (filename without extension), but only for files within the project's configured `model-paths` directories. This prevents false matches — for example, a `scripts/schema.sql` file will not be matched to a dbt model named `schema`, but `models/schema.sql` will.
+
+```
+models/fct_daily_revenue.sql       ✓ matches model "fct_daily_revenue"
+models/staging/fct_daily_revenue.sql  ✓ matches (subdirectories OK)
+scripts/fct_daily_revenue.sql      ✗ outside model-paths
+schema.sql                         ✗ outside model-paths
+```
+
 ### How It Enriches
 
 **Symbol `ecosystem_context`** (injected into AI prompts):
@@ -194,7 +205,8 @@ class TerraformContextProvider(ContextProvider):
         # ... your parsing logic here ...
 
     def get_file_context(self, file_path: str) -> Optional[FileContext]:
-        # Return context if this file has metadata
+        # Validate the file is within your tool's project directories
+        # before matching by stem, to avoid false positives
         module = self._modules.get(Path(file_path).stem)
         if module:
             return FileContext(
@@ -259,6 +271,42 @@ Potential future providers for community contribution:
 ## Configuration
 
 Context providers require no configuration — they activate automatically when their ecosystem is detected. Provider-specific optional dependencies (like `pyyaml` for dbt) should be installed separately.
+
+### Disabling Context Providers
+
+Context providers can be disabled globally via environment variable or per-call via parameter:
+
+**Environment variable** — disables providers for all `index_folder` calls:
+
+```bash
+JCODEMUNCH_CONTEXT_PROVIDERS=0
+```
+
+In your MCP server config:
+
+```json
+{
+  "mcpServers": {
+    "jcodemunch": {
+      "command": "uvx",
+      "args": ["jcodemunch-mcp"],
+      "env": {
+        "JCODEMUNCH_CONTEXT_PROVIDERS": "0"
+      }
+    }
+  }
+}
+```
+
+**Per-call parameter** — pass `context_providers: false` to `index_folder`:
+
+```python
+index_folder(path="/my/project", context_providers=False)
+```
+
+Either method skips provider discovery entirely — no YAML parsing, no doc block scanning, no enrichment overhead.
+
+### Debugging
 
 To verify which providers activated during indexing, check the `context_enrichment` key in the `index_folder` response or enable debug logging:
 

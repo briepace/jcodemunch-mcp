@@ -172,8 +172,10 @@ class DbtContextProvider(ContextProvider):
     """
 
     def __init__(self):
+        self._dbt_yml_path: Optional[Path] = None
         self._doc_blocks: dict[str, str] = {}
         self._models: dict[str, DbtModelMetadata] = {}
+        self._model_path_prefixes: list[str] = []
 
     @property
     def name(self) -> str:
@@ -184,6 +186,9 @@ class DbtContextProvider(ContextProvider):
         return self._dbt_yml_path is not None
 
     def load(self, folder_path: Path) -> None:
+        if self._dbt_yml_path is None:
+            logger.warning("load() called without detect() — skipping")
+            return
         project_root = self._dbt_yml_path.parent
         logger.info("dbt project detected at %s", project_root)
 
@@ -210,13 +215,32 @@ class DbtContextProvider(ContextProvider):
             if md not in docs_dirs:
                 docs_dirs.append(md)
 
+        # Store model path prefixes (relative to indexed folder) for path validation.
+        # Only files under these prefixes are considered dbt models.
+        self._model_path_prefixes = []
+        for md in models_dirs:
+            try:
+                rel = md.resolve().relative_to(folder_path.resolve())
+                # Normalize to forward slashes for cross-platform matching
+                self._model_path_prefixes.append(str(rel).replace("\\", "/") + "/")
+            except ValueError:
+                # Model dir is outside the indexed folder — use absolute as fallback
+                self._model_path_prefixes.append(str(md).replace("\\", "/") + "/")
+
         self._doc_blocks = _parse_doc_blocks(docs_dirs)
         logger.info("Loaded %d dbt doc blocks", len(self._doc_blocks))
 
         self._models = _parse_yml_files(models_dirs, self._doc_blocks)
         logger.info("Loaded metadata for %d dbt models", len(self._models))
 
+    def _is_in_model_path(self, file_path: str) -> bool:
+        """Check if a file is within a dbt model directory."""
+        normalized = file_path.replace("\\", "/")
+        return any(normalized.startswith(prefix) for prefix in self._model_path_prefixes)
+
     def get_file_context(self, file_path: str) -> Optional[FileContext]:
+        if not self._is_in_model_path(file_path):
+            return None
         stem = Path(file_path).stem
         model = self._models.get(stem)
         if model is not None:
