@@ -2,6 +2,11 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.2.5] - 2026-03-08
+
+### Added
+- `staleness_warning` field in `get_repo_outline` response when the index is 7+ days old — configurable via `JCODEMUNCH_STALENESS_DAYS` env var
+
 ## [1.2.4] - 2026-03-08
 
 ### Added

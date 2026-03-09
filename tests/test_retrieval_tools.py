@@ -1,5 +1,8 @@
 """Tests for repository-wide retrieval tools."""
 
+import json
+from datetime import datetime, timedelta, timezone
+
 from jcodemunch_mcp.parser import Symbol
 from jcodemunch_mcp.storage import IndexStore
 from jcodemunch_mcp.tools.get_file_content import get_file_content
@@ -64,6 +67,34 @@ def test_get_repo_outline_counts_no_symbol_files(tmp_path):
     assert result["file_count"] == 2
     assert result["languages"] == {"python": 1, "cpp": 1}
     assert result["directories"] == {"include/": 1, "src/": 1}
+
+
+def _backdate_index(tmp_path, owner, name, days):
+    """Overwrite indexed_at in the stored JSON to simulate an old index."""
+    index_file = tmp_path / f"{owner}-{name}.json"
+    data = json.loads(index_file.read_text())
+    data["indexed_at"] = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    index_file.write_text(json.dumps(data))
+
+
+def test_get_repo_outline_staleness_warning_when_old(tmp_path):
+    """get_repo_outline should include staleness_warning when index is >= 7 days old."""
+    _seed_repo(tmp_path)
+    _backdate_index(tmp_path, "retrieval", "demo", days=8)
+
+    result = get_repo_outline("retrieval/demo", storage_path=str(tmp_path))
+
+    assert "staleness_warning" in result
+    assert "8 days old" in result["staleness_warning"]
+
+
+def test_get_repo_outline_no_staleness_warning_when_fresh(tmp_path):
+    """get_repo_outline should not include staleness_warning for a recent index."""
+    _seed_repo(tmp_path)
+
+    result = get_repo_outline("retrieval/demo", storage_path=str(tmp_path))
+
+    assert "staleness_warning" not in result
 
 
 def test_search_text_groups_matches_and_includes_context(tmp_path):
