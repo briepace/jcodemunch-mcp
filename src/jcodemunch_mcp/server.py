@@ -527,37 +527,133 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
 
-async def run_server():
-    """Run the MCP server."""
+async def run_stdio_server():
+    """Run the MCP server over stdio (default)."""
     import sys
     from mcp.server.stdio import stdio_server
     print(f"jcodemunch-mcp {__version__} by jgravelle · https://github.com/jgravelle/jcodemunch-mcp", file=sys.stderr)
     logger.info(
-        "startup version=%s storage=%s ai_summaries=%s",
+        "startup version=%s transport=stdio storage=%s ai_summaries=%s",
         __version__,
         os.environ.get("CODE_INDEX_PATH", "~/.code-index/"),
         _default_use_ai_summaries(),
     )
-
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
             write_stream,
-            server.create_initialization_options()
+            server.create_initialization_options(),
         )
+
+
+async def run_sse_server(host: str, port: int):
+    """Run the MCP server with SSE transport (persistent HTTP mode)."""
+    import sys
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.routing import Mount, Route
+    from mcp.server.sse import SseServerTransport
+
+    sse_transport = SseServerTransport("/messages/")
+
+    async def handle_sse(request: Request):
+        async with sse_transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+
+    starlette_app = Starlette(routes=[
+        Route("/sse", endpoint=handle_sse),
+        Mount("/messages/", app=sse_transport.handle_post_message),
+    ])
+
+    print(
+        f"jcodemunch-mcp {__version__} by jgravelle · SSE server at http://{host}:{port}/sse",
+        file=sys.stderr,
+    )
+    logger.info(
+        "startup version=%s transport=sse host=%s port=%d storage=%s",
+        __version__, host, port,
+        os.environ.get("CODE_INDEX_PATH", "~/.code-index/"),
+    )
+    config = uvicorn.Config(starlette_app, host=host, port=port, log_level="warning")
+    await uvicorn.Server(config).serve()
+
+
+async def run_streamable_http_server(host: str, port: int):
+    """Run the MCP server with streamable-http transport (persistent HTTP mode)."""
+    import sys
+    import anyio
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.routing import Route
+    from mcp.server.streamable_http import StreamableHTTPServerTransport
+
+    async def handle_mcp(request: Request):
+        transport = StreamableHTTPServerTransport(mcp_session_id=None)
+        async with transport.connect() as (read_stream, write_stream):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(
+                    server.run,
+                    read_stream,
+                    write_stream,
+                    server.create_initialization_options(),
+                )
+                await transport.handle_request(
+                    request.scope, request.receive, request._send
+                )
+
+    starlette_app = Starlette(routes=[
+        Route("/mcp", endpoint=handle_mcp, methods=["GET", "POST", "DELETE"]),
+    ])
+
+    print(
+        f"jcodemunch-mcp {__version__} by jgravelle · streamable-http server at http://{host}:{port}/mcp",
+        file=sys.stderr,
+    )
+    logger.info(
+        "startup version=%s transport=streamable-http host=%s port=%d storage=%s",
+        __version__, host, port,
+        os.environ.get("CODE_INDEX_PATH", "~/.code-index/"),
+    )
+    config = uvicorn.Config(starlette_app, host=host, port=port, log_level="warning")
+    await uvicorn.Server(config).serve()
 
 
 def main(argv: Optional[list[str]] = None):
     """Main entry point."""
     parser = argparse.ArgumentParser(
         prog="jcodemunch-mcp",
-        description="Run the jCodeMunch MCP stdio server.",
+        description="Run the jCodeMunch MCP server.",
     )
     parser.add_argument(
         "-V",
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
+    )
+    parser.add_argument(
+        "--transport",
+        default=os.environ.get("JCODEMUNCH_TRANSPORT", "stdio"),
+        choices=["stdio", "sse", "streamable-http"],
+        help="Transport mode: stdio (default), sse, or streamable-http (also via JCODEMUNCH_TRANSPORT env var)",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("JCODEMUNCH_HOST", "127.0.0.1"),
+        help="Host to bind to in HTTP transport mode (also via JCODEMUNCH_HOST env var, default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("JCODEMUNCH_PORT", "8901")),
+        help="Port to listen on in HTTP transport mode (also via JCODEMUNCH_PORT env var, default: 8901)",
     )
     parser.add_argument(
         "--log-level",
@@ -591,7 +687,12 @@ def main(argv: Optional[list[str]] = None):
     if extra_ext:
         logging.getLogger(__name__).info("JCODEMUNCH_EXTRA_EXTENSIONS: %s", extra_ext)
 
-    asyncio.run(run_server())
+    if args.transport == "sse":
+        asyncio.run(run_sse_server(args.host, args.port))
+    elif args.transport == "streamable-http":
+        asyncio.run(run_streamable_http_server(args.host, args.port))
+    else:
+        asyncio.run(run_stdio_server())
 
 
 if __name__ == "__main__":
