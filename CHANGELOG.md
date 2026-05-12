@@ -2,6 +2,80 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.0] — 2026-05-12 — Explicit-paths indexing + workspace-aware project intel
+
+Two additive features, both shipped behind new optional parameters; every
+existing call shape is preserved.
+
+### Explicit-paths indexing (`index_folder(paths=[...])`)
+
+`index_folder` gains a `paths=[...]` parameter that bypasses the directory
+walk and indexes only the listed files / subdirs. Each entry may be
+absolute or relative to `path`. Useful for batch-indexing exactly the
+files an agent already knows about — the changeset for a PR, the output
+of `git diff --name-only`, an `rg` or `fd` match list — without paying
+the cost (or risking the surprise) of a full-tree walk.
+
+Validation matches the walk path: entries outside `walk_root`, traversal
+attempts, symlink escapes, oversize files, and unsupported extensions all
+warn-and-skip with per-entry messages in `warnings`. Directories in the
+list are expanded via `discover_local_files` so the same .gitignore /
+framework filter applies.
+
+CLI: new `--paths-from FILE` flag on `jcodemunch-mcp index`. Use `-` for
+stdin to compose with `git`, `find`, `fd`, `rg`:
+
+```bash
+git diff --name-only HEAD~5 -- '*.py' \
+  | jcodemunch-mcp index . --paths-from -
+```
+
+Lines starting with `#` are comments. Empty input is a hard error so the
+command doesn't silently fall through to a full-tree index. Rejected for
+GitHub-repo targets (only local folders).
+
+### Workspace-aware project intel (`list_workspaces`, `get_project_intel(scope_path=)`)
+
+Monorepos increasingly mix multiple tech stacks under one git root —
+`packages/api` is a Node service, `packages/cli` is a Rust binary,
+`crates/foo` is a library, `go.work` ties three modules together. Until
+now, `get_project_intel` returned a repo-wide aggregate; agents asking
+about `packages/api` got the whole monorepo in their face.
+
+**New `list_workspaces` tool** auto-detects workspace members from:
+* **pnpm** — `pnpm-workspace.yaml` `packages:` globs
+* **yarn / npm** — `package.json` `workspaces:` (list or {packages: [...]} form)
+* **turborepo** — `turbo.json` signal layered over the underlying npm/yarn/pnpm config
+* **lerna** — `lerna.json` `packages:` globs
+* **rush** — `rush.json` `projects: [{packageName, projectFolder}, ...]`
+* **Go** — `go.work` `use ( ... )` directive (module name read from each `go.mod`)
+* **Cargo** — `Cargo.toml` `[workspace] members = [...]` globs
+
+Returns `[{path, package_name, manager}, ...]` plus an `is_monorepo`
+flag and the list of contributing managers. When the same path is
+claimed by multiple managers (turborepo + pnpm is common), the
+more-specific manager wins; `managers` surfaces every contributor.
+
+**`get_project_intel(scope_path=...)`** restricts intel discovery to a
+relative subpath under `source_root`. The cross-reference pass still
+consults the global index, so a package's Dockerfile still resolves
+against repo-level symbols. Combined with `list_workspaces`, agents can
+now ask "what's the deployment story for `packages/api`?" and get just
+that package's Dockerfile, CI workflows, `.env` template, and
+`package.json` scripts — not the whole monorepo.
+
+`scope_path` is validated against `source_root` (traversal attempts,
+absolute paths outside the root, and non-existent directories all
+error rather than silently fall through to a wider scan).
+
+### Notes
+- Both changes are additive — every existing call signature works
+  unchanged. New params default to None / repo-wide behaviour.
+- Tool count: 80 → 81 (added `list_workspaces`).
+- `list_workspaces` joins the `standard` tool tier; `get_project_intel`
+  was already in `standard`.
+- 16 new tests in `test_v1_108_0.py`. 4336 passed, 7 skipped.
+
 ## [1.107.1] — 2026-05-11 — Truthful unloadable-index reporting
 
 Fixes a real UX trap where `resolve_repo()` could report `indexed: true`

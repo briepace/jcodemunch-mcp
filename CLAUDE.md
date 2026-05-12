@@ -1,10 +1,11 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.107.0 (Claude Agent Skill bundle — `jcm install <agent> --skills` emits `.claude/skills/jcodemunch/SKILL.md` with YAML frontmatter and a tier-aware tool-usage decision tree; loads on demand instead of always-on baseline context)
+- **Version:** 1.108.0 (Explicit-paths indexing + workspace-aware project intel — `index_folder(paths=[...])` skips the tree walk and indexes only the listed files; new `list_workspaces` tool enumerates pnpm/yarn/npm/turborepo/lerna/rush/Go/Cargo workspace members; `get_project_intel(scope_path=)` restricts discovery to a workspace member)
 - **INDEX_VERSION:** 16
-- **Tests:** 4309 passed, 7 skipped (1.107.0)
+- **Tests:** 4336 passed, 7 skipped (1.108.0)
 - **Python:** >=3.10
+- **Tool count:** 81 (was 80; +list_workspaces)
 
 ## Key Files
 ```
@@ -49,7 +50,7 @@ src/jcodemunch_mcp/
   summarizer/
     batch_summarize.py # 3-tier: Anthropic > Gemini > OpenAI-compat > signature fallback
   tools/
-    index_folder.py    # Local indexer (sync → asyncio.to_thread in server.py)
+    index_folder.py    # Local indexer (sync → asyncio.to_thread in server.py). v1.108.0 adds `paths=[...]` arg via new `resolve_explicit_paths()` helper to skip the directory walk when the caller supplies an explicit file/subdir list; security matches the walk path (outside-root / traversal / symlink-escape / oversize / unsupported-ext all warn-and-skip with per-entry warnings).
     index_repo.py      # GitHub indexer (async, httpx)
     get_symbol.py      # get_symbol_source: shape-follows-input (id→flat, ids[]→{symbols,errors})
     search_columns.py  # Column search across dbt/SQLMesh models
@@ -80,7 +81,8 @@ src/jcodemunch_mcp/
     get_signal_chains.py      # get_signal_chains: entry-point-to-leaf pathway discovery; traces how HTTP/CLI/task/event signals propagate through the call graph; discovery + lookup modes
     render_diagram.py         # render_diagram: universal Mermaid renderer; auto-detects source tool, picks optimal diagram type (flowchart/sequence), encodes metadata as visual signals; 3 themes, smart pruning; optional `open_in_viewer` (config-gated, spawns mmd-viewer)
     mermaid_viewer.py         # mmd-viewer spawn helper for render_diagram; resolve_viewer_path/open_diagram/cleanup_temp_dir; jcm- prefix for safe cleanup; config-gated via render_diagram_viewer_enabled + mermaid_viewer_path
-    get_project_intel.py      # get_project_intel: auto-discover+parse non-code knowledge (Dockerfiles, CI configs, compose, K8s, .env templates, Makefiles, scripts); cross-references to code symbols; 6 categories
+    get_project_intel.py      # get_project_intel: auto-discover+parse non-code knowledge (Dockerfiles, CI configs, compose, K8s, .env templates, Makefiles, scripts); cross-references to code symbols; 6 categories. v1.108.0 adds `scope_path` arg to restrict discovery to a monorepo subpath (use list_workspaces.path values); validates against source_root (traversal/absolute/non-existent all error).
+    list_workspaces.py        # (v1.108.0) Enumerate monorepo workspace members. Detects pnpm (pnpm-workspace.yaml), yarn/npm (package.json `workspaces:`), turborepo (turbo.json), lerna (lerna.json), rush (rush.json), Go (go.work `use (...)`, module name from go.mod), Cargo (Cargo.toml `[workspace] members`). Returns `[{path, package_name, manager}, ...]` plus `is_monorepo` + `managers`. Read-only, dependency-free (hand-rolled minimal TOML/YAML readers).
     get_repo_health.py        # get_repo_health: one-call triage snapshot (delegate aggregator); includes six-axis `radar` field (v1.87.0)
     health_radar.py           # Six-axis health radar (complexity/dead_code/cycles/coupling/test_gap/churn_surface) + diff_health_radar pure-function tool for PR-time diff-grade reporting (v1.87.0). Phase 7 (v1.100.0): optional 7th axis runtime_coverage when caller passes runtime_coverage_pct; axis is omitted otherwise so the composite stays comparable against pre-Phase-7 baselines. diff_radar walks the axes dict generically — picks up the new axis automatically.
     get_untested_symbols.py   # get_untested_symbols: find functions with no test-file reachability (import graph + name matching)

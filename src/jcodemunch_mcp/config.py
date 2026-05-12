@@ -328,7 +328,7 @@ DEFAULTS = {
             "get_dependency_cycles", "get_coupling_metrics",
             "get_layer_violations", "get_cross_repo_map", "get_group_contracts",
             "get_tectonic_map", "get_signal_chains", "render_diagram",
-            "get_project_intel", "invalidate_cache", "get_watch_status",
+            "get_project_intel", "list_workspaces", "invalidate_cache", "get_watch_status",
             "analyze_perf", "tune_weights", "check_embedding_drift",
             "digest", "diff_health_radar", "get_file_risk",
             "import_runtime_signal", "get_runtime_coverage",
@@ -1507,7 +1507,7 @@ def generate_template() -> str:
       "get_dependency_cycles", "get_coupling_metrics",
       "get_layer_violations", "get_cross_repo_map", "get_group_contracts",
       "get_tectonic_map", "get_signal_chains", "render_diagram",
-      "get_project_intel", "invalidate_cache"
+      "get_project_intel", "list_workspaces", "invalidate_cache"
     ]
   }},
 

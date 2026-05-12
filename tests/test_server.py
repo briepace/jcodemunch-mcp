@@ -21,7 +21,7 @@ async def test_server_lists_all_tools():
     try:
         tools = await list_tools()
 
-        assert len(tools) == 80  # +1: assemble_task_context (task-aware orchestrator, v1.105.0)
+        assert len(tools) == 81  # +1: list_workspaces (monorepo enumeration, v1.108.0)
 
         names = {t.name for t in tools}
         expected = {
@@ -43,7 +43,7 @@ async def test_server_lists_all_tools():
             "get_symbol_complexity", "get_churn_rate", "get_hotspots", "get_repo_health",
             "audit_agent_config", "get_untested_symbols", "search_ast",
             "get_tectonic_map", "get_signal_chains", "render_diagram",
-            "get_project_intel",
+            "get_project_intel", "list_workspaces",
             "get_symbol_provenance", "get_pr_risk_profile",
             "winnow_symbols", "get_watch_status", "analyze_perf", "tune_weights",
             "check_embedding_drift",
@@ -152,6 +152,7 @@ async def test_call_tool_defaults_index_folder_incremental_true():
         extra_ignore_patterns=None,
         follow_symlinks=False,
         incremental=True,
+        paths=None,
         progress_cb=None,
     )
 
@@ -670,9 +671,9 @@ async def test_disabled_tools_filtered_from_schema(monkeypatch):
         assert "index_repo" not in tool_names
         assert "search_columns" not in tool_names
         assert "get_file_tree" in tool_names  # Not disabled
-        # 80 default tools + test_summarizer (config cleared) - 2 disabled = 79
+        # 81 default tools + test_summarizer (config cleared) - 2 disabled = 80
         # set_tool_tier + announce_model + jcodemunch_guide are force-included even when disabled
-        assert len(tools) == 79
+        assert len(tools) == 80
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)
@@ -690,7 +691,7 @@ async def test_disabled_tools_empty_all_tools_present(monkeypatch):
         config_module._GLOBAL_CONFIG["disabled_tools"] = []
 
         tools = await list_tools()
-        assert len(tools) == 81  # 80 + test_summarizer (config cleared, so disabled gate off)
+        assert len(tools) == 82  # 81 + test_summarizer (config cleared, so disabled gate off)
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)

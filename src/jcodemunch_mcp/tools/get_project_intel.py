@@ -72,8 +72,15 @@ def _load_yaml_all(content: str) -> list:
 # File discovery
 # ---------------------------------------------------------------------------
 
-def _discover_intel_files(source_root: str) -> dict[str, list[str]]:
+def _discover_intel_files(source_root: str, scope: Optional[str] = None) -> dict[str, list[str]]:
     """Walk source_root once and categorize intel-bearing files.
+
+    When ``scope`` is provided (a relative subpath under ``source_root``), the
+    walk is restricted to that subtree and rel-dir calculations are taken
+    relative to ``scope``. This is what powers per-package intel queries on a
+    monorepo: ``get_project_intel(scope_path="packages/api")`` reports the
+    package's own Dockerfile / package.json / CI files even when the
+    repo-level Dockerfile lives elsewhere.
 
     Returns {category: [absolute_path, ...]}.
     """
@@ -82,11 +89,19 @@ def _discover_intel_files(source_root: str) -> dict[str, list[str]]:
     }
     total = 0
 
-    for dirpath, dirnames, filenames in os.walk(source_root, followlinks=False):
+    walk_root = source_root
+    rel_anchor = source_root
+    if scope:
+        scoped = os.path.normpath(os.path.join(source_root, scope))
+        if os.path.isdir(scoped):
+            walk_root = scoped
+            rel_anchor = scoped
+
+    for dirpath, dirnames, filenames in os.walk(walk_root, followlinks=False):
         # Prune skipped directories
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
 
-        rel_dir = os.path.relpath(dirpath, source_root).replace("\\", "/")
+        rel_dir = os.path.relpath(dirpath, rel_anchor).replace("\\", "/")
         if rel_dir == ".":
             rel_dir = ""
 
@@ -136,6 +151,10 @@ def _discover_intel_files(source_root: str) -> dict[str, list[str]]:
                 continue
 
             # --- deps ---
+            # When scope is set, "rel_dir == ''" means the package root rather
+            # than the repo root — exactly the behaviour we want for
+            # per-package intel (each workspace member has its own
+            # package.json / pyproject.toml).
             if fname == "package.json" and rel_dir in ("", "."):
                 found["deps"].append(fpath)
                 total += 1
@@ -925,9 +944,19 @@ def _build_cross_references(discoveries: dict, index) -> list[dict]:
 def get_project_intel(
     repo: str,
     category: str = "all",
+    scope_path: Optional[str] = None,
     storage_path: Optional[str] = None,
 ) -> dict:
-    """Auto-discover and parse non-code knowledge files, cross-reference to code."""
+    """Auto-discover and parse non-code knowledge files, cross-reference to code.
+
+    ``scope_path`` (optional) restricts file discovery to a subpath of
+    ``source_root`` — typically a workspace member like ``packages/api``.
+    Use ``list_workspaces`` to enumerate the available members. Repo-wide
+    discovery (the default) reads every Dockerfile / CI workflow / .env
+    template in the tree; scoped discovery reads only those inside the
+    specified subtree. The cross-reference pass still consults the global
+    index so a package's container still resolves against repo-level code.
+    """
     t0 = time.monotonic()
 
     if category not in _VALID_CATEGORIES:
@@ -954,13 +983,33 @@ def get_project_intel(
                      "Use index_folder (not index_repo) to create one."
         }
 
+    # Validate scope_path: must be a relative path under source_root.
+    if scope_path:
+        # Reject absolute paths and traversal up out of source_root
+        if os.path.isabs(scope_path):
+            try:
+                scope_path = os.path.relpath(scope_path, source_root)
+            except ValueError:
+                return {"error": f"scope_path {scope_path!r} is not under source_root"}
+        normalised = os.path.normpath(scope_path).replace("\\", "/").strip("/")
+        if normalised.startswith("..") or "/.." in normalised:
+            return {"error": f"scope_path {scope_path!r} escapes source_root"}
+        scoped_abs = os.path.normpath(os.path.join(source_root, normalised))
+        if not os.path.isdir(scoped_abs):
+            return {"error": f"scope_path {scope_path!r} is not a directory under source_root"}
+        scope_path = normalised
+    else:
+        scope_path = None
+
     # Determine which categories to process
     cats = list(_VALID_CATEGORIES - {"all"}) if category == "all" else [category]
 
     # Phase 1: Discover intel files from filesystem
     fs_cats = {"infra", "ci", "config", "deps"}
     need_fs = bool(fs_cats & set(cats))
-    discovered_files = _discover_intel_files(source_root) if need_fs else {}
+    discovered_files = (
+        _discover_intel_files(source_root, scope=scope_path) if need_fs else {}
+    )
 
     # Phase 2: Parse discovered files
     result_categories: dict = {}
@@ -1081,7 +1130,7 @@ def get_project_intel(
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-    return {
+    response: dict = {
         "repo": f"{owner}/{name}",
         "categories": result_categories,
         "cross_references": cross_refs,
@@ -1093,3 +1142,7 @@ def get_project_intel(
             "categories_requested": category,
         },
     }
+    if scope_path:
+        response["scope_path"] = scope_path
+        response["_meta"]["scope_path"] = scope_path
+    return response

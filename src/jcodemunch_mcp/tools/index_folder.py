@@ -434,6 +434,112 @@ def _scan_package_json_forced_paths(folder_path: Path) -> set[str]:
     return forced
 
 
+def resolve_explicit_paths(
+    walk_root: Path,
+    paths: list,
+    max_files: Optional[int],
+    max_size: int = DEFAULT_MAX_FILE_SIZE,
+    follow_symlinks: bool = False,
+) -> tuple[list[Path], list[str], dict[str, int]]:
+    """Materialise a caller-supplied list of paths into the (files, warnings,
+    skip_counts) shape that the standard indexing pipeline expects.
+
+    Each entry can be absolute or relative to ``walk_root``. Files are added
+    when they live under ``walk_root`` and have a known language. Directories
+    are recursed via ``discover_local_files`` against that subtree (so the
+    same .gitignore / framework filter applies). Entries outside the root,
+    non-existent paths, symlink escapes, and oversize files are rejected
+    with per-entry warnings — matching the security posture of the full
+    walker.
+
+    Used by ``index_folder(paths=...)`` so agents can re-index exactly the
+    files they already know about (git-diff list, edited-files list,
+    rg-matched list) without paying the cost of a full directory walk.
+    """
+    files: list[Path] = []
+    warnings: list[str] = []
+    skip_counts: dict[str, int] = {}
+    seen: set = set()
+
+    cap = max_files if max_files is not None else 10_000_000
+
+    for raw in paths:
+        if len(files) >= cap:
+            break
+        if not isinstance(raw, str) or not raw.strip():
+            warnings.append(f"Skipped empty/non-string path: {raw!r}")
+            continue
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = (walk_root / p)
+        try:
+            p = p.resolve()
+        except OSError as e:
+            warnings.append(f"Skipped unresolvable path {raw!r}: {e}")
+            continue
+
+        try:
+            p.relative_to(walk_root)
+        except ValueError:
+            warnings.append(f"Skipped path outside walk root: {raw!r}")
+            continue
+
+        if not p.exists():
+            warnings.append(f"Skipped non-existent path: {raw!r}")
+            continue
+
+        if p.is_dir():
+            remaining = cap - len(files)
+            sub_files, sub_warnings, sub_skip = discover_local_files(
+                p,
+                max_files=remaining,
+                max_size=max_size,
+                follow_symlinks=follow_symlinks,
+            )
+            warnings.extend(sub_warnings)
+            for k, v in sub_skip.items():
+                skip_counts[k] = skip_counts.get(k, 0) + v
+            for f in sub_files:
+                fr = f.resolve()
+                if fr not in seen:
+                    seen.add(fr)
+                    files.append(f)
+                    if len(files) >= cap:
+                        break
+            continue
+
+        if not p.is_file():
+            warnings.append(f"Skipped non-file/non-dir entry: {raw!r}")
+            continue
+
+        # File-level security mirrors discover_local_files
+        if not follow_symlinks and p.is_symlink():
+            warnings.append(f"Skipped symlink (follow_symlinks=False): {raw!r}")
+            skip_counts["symlink"] = skip_counts.get("symlink", 0) + 1
+            continue
+
+        if get_language_for_path(str(p)) is None and p.suffix not in LANGUAGE_EXTENSIONS:
+            warnings.append(f"Skipped unsupported extension: {raw!r}")
+            skip_counts["unknown_extension"] = skip_counts.get("unknown_extension", 0) + 1
+            continue
+
+        try:
+            if p.stat().st_size > max_size:
+                warnings.append(f"Skipped oversize file (>{max_size} bytes): {raw!r}")
+                skip_counts["too_large"] = skip_counts.get("too_large", 0) + 1
+                continue
+        except OSError as e:
+            warnings.append(f"Skipped stat-error path {raw!r}: {e}")
+            continue
+
+        pr = p.resolve()
+        if pr not in seen:
+            seen.add(pr)
+            files.append(p)
+
+    return files[:cap], warnings, skip_counts
+
+
 def discover_local_files(
     folder_path: Path,
     max_files: Optional[int] = None,
@@ -658,6 +764,7 @@ def index_folder(
     incremental: bool = True,
     context_providers: bool = True,
     changed_paths: Optional[list[WatcherChange]] = None,
+    paths: Optional[list[str]] = None,
     progress_cb: "Optional[Callable[[int, int, str], None]]" = None,
 ) -> dict:
     """Index a local folder containing source code.
@@ -1179,12 +1286,25 @@ def index_folder(
         # subdir, we walk only the subdir but resolve paths relative to
         # folder_path (= git root) downstream so file_paths are
         # git-root-relative.
-        source_files, discover_warnings, skip_counts = discover_local_files(
-            walk_root,
-            max_files=max_files,
-            extra_ignore_patterns=_merged_ignore or None,
-            follow_symlinks=follow_symlinks,
-        )
+        #
+        # v1.108: when the caller supplied `paths=[...]`, skip the directory
+        # walk entirely and materialise the file list from those explicit
+        # entries. Validation matches the walk path (outside-root, traversal,
+        # symlink-escape, oversize, unsupported-extension all warn-and-skip).
+        if paths is not None:
+            source_files, discover_warnings, skip_counts = resolve_explicit_paths(
+                walk_root,
+                list(paths),
+                max_files=max_files,
+                follow_symlinks=follow_symlinks,
+            )
+        else:
+            source_files, discover_warnings, skip_counts = discover_local_files(
+                walk_root,
+                max_files=max_files,
+                extra_ignore_patterns=_merged_ignore or None,
+                follow_symlinks=follow_symlinks,
+            )
         warnings.extend(discover_warnings)
         logger.info("Discovery skip counts: %s", skip_counts)
 

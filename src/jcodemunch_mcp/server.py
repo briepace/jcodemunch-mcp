@@ -68,7 +68,7 @@ _CANONICAL_TOOL_NAMES: tuple[str, ...] = (
     "get_dependency_cycles", "get_coupling_metrics", "get_layer_violations",
     "get_extraction_candidates", "get_cross_repo_map", "get_group_contracts",
     "get_tectonic_map", "get_signal_chains",
-    "render_diagram", "get_project_intel",
+    "render_diagram", "get_project_intel", "list_workspaces",
     # Quality & Metrics
     "get_symbol_complexity", "get_churn_rate", "get_hotspots",
     "get_repo_health", "get_symbol_importance", "get_repo_map", "find_dead_code",
@@ -141,7 +141,7 @@ _TOOL_TIER_STANDARD: frozenset[str] = _TOOL_TIER_CORE | frozenset({
     "get_dependency_cycles", "get_coupling_metrics", "get_layer_violations",
     "get_cross_repo_map", "get_group_contracts",
     "get_tectonic_map", "get_signal_chains",
-    "render_diagram", "get_project_intel",
+    "render_diagram", "get_project_intel", "list_workspaces",
     # Utilities
     "invalidate_cache", "get_watch_status", "analyze_perf", "tune_weights", "check_embedding_drift",
     # Agent stand-up briefing
@@ -448,6 +448,31 @@ def _default_use_ai_summaries() -> bool:
     return str(raw).strip().lower() not in ("false", "0", "no", "off")
 
 
+def _load_index_paths_from_arg(paths_from: str) -> tuple[Optional[list], Optional[str]]:
+    """Read explicit paths from a file or stdin for `jcodemunch-mcp index --paths-from`.
+
+    Returns ``(paths, None)`` on success or ``(None, error_message)`` on failure.
+    Filters out empty lines and ``# …`` comments. An empty list is treated as
+    an error so the command doesn't silently fall through to a full-tree index.
+    """
+    from pathlib import Path as _Path
+    try:
+        if paths_from == "-":
+            raw = sys.stdin.read()
+        else:
+            raw = _Path(paths_from).read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return None, f"Cannot read --paths-from {paths_from!r}: {e}"
+    out = [
+        ln.strip()
+        for ln in raw.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    if not out:
+        return None, f"--paths-from {paths_from!r} contained no usable paths"
+    return out, None
+
+
 # ---------------------------------------------------------------------------
 # Session state persistence (Feature 10: Session-Aware Routing)
 # ---------------------------------------------------------------------------
@@ -752,6 +777,11 @@ def _build_tools_list() -> list[Tool]:
                         "type": "boolean",
                         "description": "When true and an existing index exists, only re-index changed files.",
                         "default": True
+                    },
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of explicit paths to index. When provided, the directory walk is skipped; only these files (and the contents of any directories in the list) are indexed. Entries may be absolute or relative to `path`. Useful for batch-indexing exactly the files an agent already knows about — e.g. the source files git just touched, the changeset for a PR, or an rg / fd match list. Validation matches the walk path (outside-root, traversal, symlink-escape, oversize, unsupported-extension all warn-and-skip)."
                     }
                 },
                 "required": ["path"]
@@ -3103,6 +3133,34 @@ def _build_tools_list() -> list[Tool]:
                         "default": "all",
                         "enum": ["all", "infra", "ci", "config", "deps", "api", "data"],
                     },
+                    "scope_path": {
+                        "type": "string",
+                        "description": "Optional subpath (relative to source_root) to restrict intel discovery to a single workspace member — e.g. 'packages/api'. When omitted, the whole repo is scanned. Use `list_workspaces` to enumerate the available members. Cross-references still consult the global index so a package's container still resolves against repo-level code.",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="list_workspaces",
+            description=(
+                "Enumerate monorepo workspace members for an indexed repo. Detects "
+                "pnpm (pnpm-workspace.yaml), yarn/npm (package.json workspaces), "
+                "turborepo (turbo.json), lerna (lerna.json), rush (rush.json), "
+                "Go (go.work), and Cargo ([workspace] members). Returns "
+                "[{path, package_name, manager}, ...] plus an `is_monorepo` flag "
+                "and the list of managers that contributed. Use the returned "
+                "`path` values as the `scope_path` argument on get_project_intel "
+                "to retrieve per-package intel (Dockerfile / CI / deps) instead of "
+                "the repo-wide aggregate."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or display name).",
+                    },
                 },
                 "required": ["repo"],
             },
@@ -3635,6 +3693,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     extra_ignore_patterns=arguments.get("extra_ignore_patterns"),
                     follow_symlinks=arguments.get("follow_symlinks", False),
                     incremental=arguments.get("incremental", True),
+                    paths=arguments.get("paths"),
                     progress_cb=_progress_cb,
                 )
             )
@@ -4529,6 +4588,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     open_in_viewer=arguments.get("open_in_viewer", False),
                 )
             )
+        elif name == "list_workspaces":
+            from .tools.list_workspaces import list_workspaces
+            result = await asyncio.to_thread(
+                functools.partial(
+                    list_workspaces,
+                    repo=arguments["repo"],
+                    storage_path=storage_path,
+                )
+            )
         elif name == "get_project_intel":
             from .tools.get_project_intel import get_project_intel
             result = await asyncio.to_thread(
@@ -4536,6 +4604,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     get_project_intel,
                     repo=arguments["repo"],
                     category=arguments.get("category", "all"),
+                    scope_path=arguments.get("scope_path"),
                     storage_path=storage_path,
                 )
             )
@@ -5405,7 +5474,8 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
                           "get_layer_violations", "get_extraction_candidates",
                           "get_cross_repo_map", "get_tectonic_map",
                           "get_signal_chains", "render_diagram",
-                          "get_project_intel", "get_group_contracts"]),
+                          "get_project_intel", "list_workspaces",
+                          "get_group_contracts"]),
         ("Quality & Metrics", ["get_symbol_complexity", "get_churn_rate", "get_hotspots",
                                 "get_repo_health", "diff_health_radar",
                                 "get_file_risk", "get_symbol_importance",
@@ -6153,6 +6223,17 @@ def main(argv: Optional[list[str]] = None):
         "--extra-ignore",
         nargs="*",
         help="Additional gitignore-style patterns to exclude",
+    )
+    index_parser.add_argument(
+        "--paths-from",
+        metavar="FILE",
+        help=(
+            "Read explicit paths to index (one per line) from FILE. Use '-' for "
+            "stdin. When set, the directory walk is skipped — only the listed "
+            "paths are indexed. Entries may be absolute or relative to the "
+            "target. Pipe-friendly with git / find / fd / rg. Lines starting "
+            "with `#` are comments."
+        ),
     )
     _add_common_args(index_parser)
 
@@ -7010,6 +7091,18 @@ def main(argv: Optional[list[str]] = None):
         import json as _json
         t = args.target
         use_ai = not args.no_ai_summaries and _default_use_ai_summaries()
+
+        # `--paths-from FILE | -` reads one path per line; comments (`# ...`)
+        # and blank lines are stripped. Empty input is a hard error so the
+        # command doesn't silently fall through to a full-tree index.
+        paths_arg: Optional[list] = None
+        paths_from = getattr(args, "paths_from", None)
+        if paths_from:
+            paths_arg, _err = _load_index_paths_from_arg(paths_from)
+            if _err is not None:
+                print(_json.dumps({"success": False, "error": _err}, indent=2))
+                sys.exit(1)
+
         # Heuristic: local paths start with /, ., or a Windows drive letter.
         # Everything else (owner/repo, github.com/owner/repo, https://github.com/...,
         # git@github.com:owner/repo) routes to the GitHub indexer, which calls
@@ -7023,8 +7116,15 @@ def main(argv: Optional[list[str]] = None):
                 storage_path=os.environ.get("CODE_INDEX_PATH"),
                 extra_ignore_patterns=args.extra_ignore,
                 follow_symlinks=args.follow_symlinks,
+                paths=paths_arg,
             )
         else:
+            if paths_arg is not None:
+                print(_json.dumps({
+                    "success": False,
+                    "error": "--paths-from is only supported for local targets, not GitHub repos.",
+                }, indent=2))
+                sys.exit(1)
             from .tools.index_repo import index_repo as _index_repo
             result = asyncio.run(_index_repo(
                 url=t,
