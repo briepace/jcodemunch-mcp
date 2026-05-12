@@ -1,19 +1,54 @@
 # Universal Agent Installer Prompt
 
-`jcm install --skills` writes a Claude Agent Skill bundle. That's a first-class
-installer for one specific environment (Claude Code). Other agent/IDE clients —
-Codex, Cursor, Windsurf, Continue, Cline, Aider, JetBrains AI, custom in-house
-agents — have their own instruction mechanisms (project rules, custom
-instructions, system prompts, plugin manifests, agent.md files, etc.).
+`jcm install <client>` covers the agent/IDE environments we ship first-class
+support for: Claude Code, Claude Desktop, Cursor, Windsurf, Continue. Other
+clients — Codex CLI, Cline, Roo Code, JetBrains AI, Aider, Zed, Goose, custom
+in-house agents — have their own instruction mechanisms (project rules,
+custom instructions, system prompts, plugin manifests, agent.md files, etc.)
+that we don't (yet) have a CLI installer for.
 
-Rather than guess which clients matter, we ship the prompt below. Paste it into
-your agent and let *it* figure out where to install jCodemunch (and jDocMunch)
-guidance for its own environment. The prompt is environment-agnostic by design.
+Rather than guess which clients matter, we ship the prompt below for the
+gap. Paste it into your agent and let *it* figure out where to install
+jCodemunch (and jDocMunch) guidance for its own environment. The prompt is
+environment-agnostic by design.
 
 When the prompt finishes, it emits a **compatibility report**. If your
 environment isn't covered by a first-class installer yet, paste that report
 into a new GitHub issue (https://github.com/jgravelle/jcodemunch-mcp/issues) —
 that's how we decide which client gets first-class support next.
+
+---
+
+## Known first-class targets — use these instead
+
+Before running the universal prompt, check whether your environment is
+already covered by a first-class CLI installer. If it is, the CLI is faster,
+better tested, and the right answer:
+
+| Environment | Use this instead |
+|---|---|
+| Claude Code | `jcm install claude-code --skills` (writes the Claude Agent Skill bundle) |
+| Claude Desktop | `jcm install claude-desktop` |
+| Cursor | `jcm install cursor` (writes `.cursor/rules/jcodemunch.mdc`) |
+| Windsurf | `jcm install windsurf` |
+| Continue | `jcm install continue` |
+| All of the above at once | `jcm install all` |
+
+Run `jcm install --list` to enumerate, and `jcm install-status --json` to
+check what's already wired.
+
+**The universal prompt below is for everything else** — Codex CLI, Cline,
+Roo Code, JetBrains AI, Aider, Zed, Goose, custom in-house agents, and any
+agent/IDE not in the table above. If you run the universal prompt against
+one of the known targets, the prompt's Step 1 environment detection will
+correctly tell you to use the CLI installer instead.
+
+The one-click install badges at the top of the README handle a *different*
+layer — they wire the MCP server itself into a client's config (so the
+tools become callable). The universal prompt handles the guidance layer
+(teaching the agent *when* to call those tools). You may need both:
+badge/CLI for the wiring, then the universal prompt for the guidance — if
+your environment isn't in the first-class table.
 
 ---
 
@@ -57,6 +92,19 @@ Determine, from observable signals only:
 
 If you cannot identify the environment with reasonable confidence, ask the
 user one targeted question. Do not guess.
+
+**Short-circuit for known first-class targets.** If the detected environment
+is Claude Code, Claude Desktop, Cursor, Windsurf, or Continue, STOP. A CLI
+installer already exists. Tell the user to run the appropriate command and
+do not proceed with the rest of this prompt:
+
+- Claude Code: `jcm install claude-code --skills`
+- Claude Desktop: `jcm install claude-desktop`
+- Cursor: `jcm install cursor`
+- Windsurf: `jcm install windsurf`
+- Continue: `jcm install continue`
+
+Only continue past Step 1 if the environment is NOT in that list.
 
 # Step 2 — Discover the instruction mechanism
 

@@ -2,6 +2,32 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.4] — 2026-05-12 — Universal prompt: short-circuit for known first-class targets
+
+Follow-up to v1.108.3. The original `AGENT_INSTALL_UNIVERSAL.md` framing
+omitted that `jcm install <client>` already covers Cursor, Windsurf, and
+Continue at the guidance layer (writes `.cursor/rules/jcodemunch.mdc`,
+etc.), not just Claude Code. Without a redirect, a Cursor user pasting
+the prompt would run full environment discovery when a one-shot CLI
+already does the job.
+
+### Changed
+
+- `AGENT_INSTALL_UNIVERSAL.md` gains a "Known first-class targets" section
+  enumerating the CLI installers users should reach for first (Claude Code,
+  Claude Desktop, Cursor, Windsurf, Continue).
+- Step 1 of the prompt body now short-circuits: if the detected environment
+  is one of the first-class targets, the agent halts and points the user at
+  the CLI command instead of proceeding.
+- Preamble clarifies the layer split — badges/CLI handle MCP server wiring;
+  the universal prompt handles agent-side guidance — and explains that some
+  users may need both (wiring + guidance) when their client isn't in the
+  first-class table.
+- README link description updated to call out which clients should use
+  `jcm install <client>` instead.
+
+Docs-only — no behaviour change in the CLI or MCP server.
+
 ## [1.108.3] — 2026-05-12 — Universal agent-installer prompt for non-Claude environments
 
 Quick-win addition from @rknighton ([#292](https://github.com/jgravelle/jcodemunch-mcp/issues/292)):
