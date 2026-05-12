@@ -175,9 +175,9 @@ async def _watch_single(
     # _local_repo_id returns "local/name-hash" — the full identifier for reindex_state.
     # IndexStore.load_index(owner, name) requires the split components.
     _pairs = parse_path_map()
-    repo_id = _local_repo_id(remap(folder_path, _pairs, reverse=True))
-    _repo_owner, _repo_store_name = repo_id.split("/", 1)
     store = IndexStore(base_path=storage_path)
+    repo_id = _local_repo_id(remap(folder_path, _pairs, reverse=True), store=store)
+    _repo_owner, _repo_store_name = repo_id.split("/", 1)
 
     # Memory hash cache: rel_path -> content hash (for WatcherChange old_hash passthrough)
     _hash_cache: dict[str, str] = {}
@@ -596,7 +596,8 @@ class WatcherManager:
     async def _do_reindex(self, folder: str, **kwargs) -> dict:
         """Perform the actual reindex operation."""
         _pairs = parse_path_map()
-        repo_id = _local_repo_id(remap(folder, _pairs, reverse=True))
+        store = IndexStore(base_path=self._storage_path)
+        repo_id = _local_repo_id(remap(folder, _pairs, reverse=True), store=store)
         mark_reindex_start(repo_id)
         try:
             result = await asyncio.to_thread(
@@ -902,7 +903,7 @@ async def sync_folders(
     errors = 0
 
     for folder in resolved:
-        repo_id = _local_repo_id(remap(folder, _pairs, reverse=True))
+        repo_id = _local_repo_id(remap(folder, _pairs, reverse=True), store=store)
         print(f"Syncing {folder}...", file=sys.stderr)
         mark_reindex_start(repo_id)
         try:
@@ -939,11 +940,12 @@ async def sync_folders(
 # worktree helpers
 # ---------------------------------------------------------------------------
 
-def _local_repo_id(folder_path: str) -> str:
+def _local_repo_id(folder_path: str, store: Optional[IndexStore] = None) -> str:
     """Compute the repo identifier that index_folder would use for a local path."""
-    p = Path(folder_path).resolve()
-    digest = hashlib.sha1(str(p).encode("utf-8")).hexdigest()[:8]
-    return f"local/{p.name}-{digest}"
+    from .storage.git_root import resolve_index_identity
+
+    decision = resolve_index_identity(folder_path, mode="config", store=store)
+    return f"{decision.owner}/{decision.name}"
 
 
 def parse_git_worktrees(repo_path: str) -> set[str]:
@@ -1069,7 +1071,8 @@ async def watch_claude_worktrees(
             except (asyncio.CancelledError, Exception):
                 pass
         _pairs = parse_path_map()
-        repo_id = _local_repo_id(remap(folder, _pairs, reverse=True))
+        store = IndexStore(base_path=storage_path)
+        repo_id = _local_repo_id(remap(folder, _pairs, reverse=True), store=store)
         try:
             result = await asyncio.to_thread(
                 invalidate_cache, repo=repo_id, storage_path=storage_path,

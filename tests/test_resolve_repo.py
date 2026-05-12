@@ -36,7 +36,7 @@ class TestResolveRepo:
         (project / "main.py").write_text("def hello(): pass\n")
         store_path = str(tmp_path / "store")
 
-        index_folder(str(project), use_ai_summaries=False, storage_path=store_path)
+        index_folder(str(project), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
         repo_id = _compute_repo_id(project)
         owner, repo_name = repo_id.split("/", 1)
         return project, store_path, owner, repo_name
@@ -59,7 +59,7 @@ class TestResolveRepo:
         (project / "main.py").write_text("def hello(): pass\n")
         store_path = str(tmp_path / "store")
 
-        index_folder(str(project), use_ai_summaries=False, storage_path=store_path)
+        index_folder(str(project), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         result = resolve_repo(str(project), storage_path=store_path)
         assert result["found"] is True
@@ -116,7 +116,7 @@ class TestResolveRepo:
         (project / "main.py").write_text("def top(): pass\n")
         store_path = str(tmp_path / "store")
 
-        index_folder(str(project), use_ai_summaries=False, storage_path=store_path)
+        index_folder(str(project), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         result = resolve_repo(str(subdir), storage_path=store_path)
         assert result["found"] is True
@@ -198,7 +198,7 @@ class TestWorktreeCanonicalCandidates:
         self._git("commit", "-m", "initial", cwd=canonical)
 
         store_path = str(tmp_path / "store")
-        index_folder(str(canonical), use_ai_summaries=False, storage_path=store_path)
+        index_folder(str(canonical), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         # Create a linked worktree on a new branch (sibling path).
         worktree = tmp_path / "wt-feature"
@@ -230,7 +230,7 @@ class TestWorktreeCanonicalCandidates:
         self._git("commit", "-m", "initial", cwd=canonical)
 
         store_path = str(tmp_path / "store")
-        index_folder(str(canonical), use_ai_summaries=False, storage_path=store_path)
+        index_folder(str(canonical), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         # An unrelated empty directory — not a worktree, not indexed.
         unrelated = tmp_path / "unrelated"

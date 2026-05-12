@@ -34,6 +34,7 @@ from ..security import (
     SKIP_FILES
 )
 from ..storage import IndexStore
+from ..storage.git_root import IdentityModeAmbiguous, IdentityModeConflict, resolve_index_identity
 from ..storage.index_store import _file_hash, _file_hash_bytes, _get_git_head, _get_git_branch
 from ..summarizer import summarize_symbols
 from ..reindex_state import WatcherChange
@@ -312,7 +313,11 @@ def _merge_subdir_into_existing(
     }
 
 
-def _resolve_repo_identity(folder_path: Path) -> tuple[str, str, str]:
+def _resolve_repo_identity(
+    folder_path: Path,
+    mode: str = "config",
+    store: Optional[IndexStore] = None,
+) -> tuple[str, str, str]:
     """Resolve the storage identity for an indexing run.
 
     Returns ``(owner, repo_name, git_root)``.  ``git_root`` is the
@@ -329,26 +334,8 @@ def _resolve_repo_identity(folder_path: Path) -> tuple[str, str, str]:
     basename-plus-hash form when no ``.git`` is found anywhere up the
     tree or when the knob is off.
     """
-    if _config.get("git_root_identity", True, repo=str(folder_path)):
-        try:
-            from ..storage.git_root import detect_git_root
-            ident = detect_git_root(str(folder_path))
-        except Exception:
-            logger.debug("git-root detection failed", exc_info=True)
-            ident = None
-        if ident is not None:
-            if ident.owner == "local":
-                # Git working tree without a usable `origin` remote.
-                # Preserve today's basename-plus-hash identity so unrelated
-                # local projects that share a folder basename never
-                # collide.  We still record the git_root on the manifest
-                # for v1.96 merge logic to use.
-                return "local", _local_repo_name(folder_path), ident.git_root
-            # Configured remote — use `<owner>/<name>` identity (matches
-            # what `index_repo <owner>/<name>` produces for the same repo).
-            return ident.owner, ident.name, ident.git_root
-    # No git working tree, or knob disabled: pre-v1.95 basename-plus-hash.
-    return "local", _local_repo_name(folder_path), ""
+    decision = resolve_index_identity(str(folder_path), mode=mode, store=store)
+    return decision.owner, decision.name, decision.git_root
 
 
 from ._indexing_pipeline import (
@@ -766,6 +753,7 @@ def index_folder(
     changed_paths: Optional[list[WatcherChange]] = None,
     paths: Optional[list[str]] = None,
     progress_cb: "Optional[Callable[[int, int, str], None]]" = None,
+    identity_mode: str = "config",
 ) -> dict:
     """Index a local folder containing source code.
 
@@ -783,6 +771,8 @@ def index_folder(
             (change_type, absolute_path) tuples where change_type is one of
             "added", "modified", "deleted".  When provided with incremental=True
             and an existing index, skips full directory discovery (~3s → ~50ms).
+        identity_mode: "config" (default), "local", or "git". Local mode keeps
+            v1.90 path-hash identity; git mode opts in to git-root identity.
 
     Returns:
         Dict with indexing results.
@@ -880,6 +870,20 @@ def index_folder(
     # Redact absolute path from responses when redact_source_root is enabled
     _redact = _config.get("redact_source_root", False)
     _folder_display = folder_path.name if _redact else str(folder_path)
+    store = IndexStore(base_path=storage_path)
+    _pairs_for_identity = parse_path_map()
+    _identity_path = Path(remap(str(folder_path), _pairs_for_identity, reverse=True))
+    try:
+        _identity_decision = resolve_index_identity(
+            str(_identity_path),
+            mode=identity_mode,
+            store=store,
+        )
+    except (IdentityModeAmbiguous, IdentityModeConflict) as exc:
+        return {"success": False, "error": str(exc)}
+    owner = _identity_decision.owner
+    repo_name = _identity_decision.name
+    _git_root = _identity_decision.git_root
 
     # ── v1.96 git-root retarget ──
     # If git_root_identity is on (default) and `folder_path` resolves into a
@@ -889,14 +893,15 @@ def index_folder(
     # against the same clone coalesce into a single repo index.
     walk_root = folder_path
     _git_root_for_walk = ""
-    # Short-circuit when the knob is off — detect_git_root() spawns a `git`
-    # subprocess and pays its wall-clock cost on every reindex. Callers
-    # who opted out of git-root identity shouldn't have to pay that cost.
     _gr = None
-    if _config.get("git_root_identity", True, repo=str(folder_path)):
+    if _identity_decision.mode == "git" and _identity_decision.git_root:
         try:
-            from ..storage.git_root import detect_git_root as _detect_git_root_for_walk
-            _gr = _detect_git_root_for_walk(str(folder_path))
+            from ..storage.git_root import GitRootIdentity
+            _gr = GitRootIdentity(
+                git_root=_identity_decision.git_root,
+                owner=_identity_decision.owner,
+                name=_identity_decision.name,
+            )
         except Exception:
             logger.debug("git-root detection failed during retarget", exc_info=True)
             _gr = None
@@ -989,12 +994,6 @@ def index_folder(
         # When the watcher provides the exact change set, skip full directory
         # discovery (~3s on Windows) and only process the affected files.
         if changed_paths and incremental:
-            _pairs = parse_path_map()
-            owner, repo_name, _git_root = _resolve_repo_identity(
-                Path(remap(str(folder_path), _pairs, reverse=True))
-            )
-            store = IndexStore(base_path=storage_path)
-
             # Branch detection for watcher fast-path
             _fast_branch = _get_git_branch(folder_path)
             _fast_is_branch_delta = False
@@ -1351,13 +1350,6 @@ def index_folder(
         elif active_providers:
             names = ", ".join(p.name for p in active_providers)
             logger.info("Active context providers: %s", names)
-
-        # Create repo identifier from folder path
-        _pairs = parse_path_map()
-        owner, repo_name, _git_root = _resolve_repo_identity(
-            Path(remap(str(folder_path), _pairs, reverse=True))
-        )
-        store = IndexStore(base_path=storage_path)
 
         # v1.95.0/1.96: collision guard + subdir-merge resolution.
         #

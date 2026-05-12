@@ -782,6 +782,12 @@ def _build_tools_list() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Optional list of explicit paths to index. When provided, the directory walk is skipped; only these files (and the contents of any directories in the list) are indexed. Entries may be absolute or relative to `path`. Useful for batch-indexing exactly the files an agent already knows about — e.g. the source files git just touched, the changeset for a PR, or an rg / fd match list. Validation matches the walk path (outside-root, traversal, symlink-escape, oversize, unsupported-extension all warn-and-skip)."
+                    },
+                    "identity_mode": {
+                        "type": "string",
+                        "enum": ["config", "local", "git"],
+                        "description": "How to derive the local-folder repo identity. Default config keeps local-first behavior unless an existing git-keyed index or config opts in. Use 'git' to opt in to git-root identity and monorepo subdir merging.",
+                        "default": "config"
                     }
                 },
                 "required": ["path"]
@@ -3702,6 +3708,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     follow_symlinks=arguments.get("follow_symlinks", False),
                     incremental=arguments.get("incremental", True),
                     paths=arguments.get("paths"),
+                    identity_mode=arguments.get("identity_mode", "config"),
                     progress_cb=_progress_cb,
                 )
             )

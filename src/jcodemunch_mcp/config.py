@@ -1405,6 +1405,32 @@ def generate_template() -> str:
   //   Enable context providers for enhanced AI summarization.
   //   Set false to disable (faster indexing, less context).
 
+  // "identity_mode": "git",
+  //   How index_folder derives the repo identifier for a local path.
+  //   Existing indexes keep their current identity regardless of this
+  //   setting — this only affects NEW indexes.
+  //
+  //   Choices:
+  //     "local" (default) — repo ID is `local/<basename>-<hash>`.
+  //       No git subprocess, no remote detection. Fast and portable.
+  //       Each folder gets its own index. Works for non-git projects,
+  //       local-only clones, and simple git workflows.
+  //
+  //     "git" — repo ID is `<owner>/<repo>` derived from the origin
+  //       remote URL. Runs a git subprocess on every index/reindex.
+  //       Enables monorepo subdir merging (multiple subdirs of the
+  //       same git root share one index). Requires a git working tree
+  //       with an origin remote. Falls back to local when detection
+  //       fails.
+  //
+  //   To switch an existing index: run invalidate_cache first, then
+  //   re-index with the new mode.
+
+  // "git_root_identity": true,
+  //   Deprecated boolean alias for identity_mode. When identity_mode
+  //   is not set, `true` here is equivalent to `"identity_mode": "git"`.
+  //   Prefer identity_mode for new configurations.
+
   // === Meta Response Control ===
   // Allowlist of _meta fields to include in responses.
   // [] (default) = no _meta at all (maximum token savings).

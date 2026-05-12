@@ -153,6 +153,7 @@ async def test_call_tool_defaults_index_folder_incremental_true():
         follow_symlinks=False,
         incremental=True,
         paths=None,
+        identity_mode="config",
         progress_cb=None,
     )
 

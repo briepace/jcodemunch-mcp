@@ -10,6 +10,7 @@ the git_root for v1.96 merge logic.
 
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -133,7 +134,7 @@ class TestResolveRepoIdentity:
         assert name == "kibana"
         assert git_root == str(repo.resolve())
 
-    def test_clone_without_origin_keeps_basename_hash(self, tmp_path, monkeypatch):
+    def test_clone_without_origin_git_mode_uses_git_root_basename(self, tmp_path, monkeypatch):
         repo = tmp_path / "internal-tool"
         repo.mkdir()
         _git("init", cwd=repo)
@@ -146,8 +147,7 @@ class TestResolveRepoIdentity:
 
         owner, name, git_root = _resolve_repo_identity(repo)
         assert owner == "local"
-        assert name.startswith("internal-tool-")
-        assert len(name.split("-")[-1]) == 8  # 8-char hash suffix
+        assert name == "internal-tool"
         assert git_root == str(repo.resolve())
 
     def test_no_git_uses_basename_hash(self, tmp_path, monkeypatch):
@@ -189,6 +189,32 @@ class TestResolveRepoIdentity:
 
 
 class TestIndexFolderIdentity:
+    def test_knob_off_skips_retarget_git_root_probe(self, tmp_path, monkeypatch):
+        repo = tmp_path / "kibana"
+        repo.mkdir()
+        _git("init", cwd=repo)
+        _set_origin(repo, "https://github.com/elastic/kibana.git")
+        sub = repo / "packages"
+        sub.mkdir()
+        (sub / "p.py").write_text("def p(): pass\n", encoding="utf-8")
+
+        monkeypatch.setattr(
+            config_module, "get",
+            lambda key, default=None, repo=None:
+                False if key == "git_root_identity" else default,
+        )
+
+        with patch("jcodemunch_mcp.storage.git_root.detect_git_root", return_value=None) as mock_detect:
+            result = index_folder(
+                str(sub),
+                use_ai_summaries=False,
+                storage_path=str(tmp_path / "store"),
+                context_providers=False,
+            )
+
+        assert result["success"] is True
+        mock_detect.assert_not_called()
+
     def test_full_clone_index_uses_owner_repo(self, tmp_path):
         repo = tmp_path / "clone-named-anything"
         repo.mkdir()
@@ -197,7 +223,7 @@ class TestIndexFolderIdentity:
         (repo / "main.py").write_text("def hello(): pass\n", encoding="utf-8")
 
         store = tmp_path / "store"
-        result = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store))
+        result = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store), identity_mode="git")
         assert result["success"] is True
         assert result["repo"] == "elastic/kibana"
 
@@ -209,7 +235,7 @@ class TestIndexFolderIdentity:
         (repo / "main.py").write_text("def hello(): pass\n", encoding="utf-8")
 
         store_path = tmp_path / "store"
-        index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path))
+        index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
 
         store = IndexStore(base_path=str(store_path))
         loaded = store.load_index("elastic", "kibana")
@@ -231,10 +257,10 @@ class TestIndexFolderIdentity:
         (sub / "x.py").write_text("def x(): pass\n", encoding="utf-8")
 
         store_path = tmp_path / "store"
-        first = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path))
+        first = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
         assert first["success"] is True
 
-        second = index_folder(str(sub), use_ai_summaries=False, storage_path=str(store_path))
+        second = index_folder(str(sub), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
         assert second["success"] is True
         assert second["repo"] == "elastic/kibana"
 
@@ -260,11 +286,11 @@ class TestIndexFolderIdentity:
         (scripts / "s.py").write_text("def s(): pass\n", encoding="utf-8")
 
         store_path = tmp_path / "store"
-        first = index_folder(str(packages), use_ai_summaries=False, storage_path=str(store_path))
+        first = index_folder(str(packages), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
         assert first["success"] is True
         assert first["repo"] == "elastic/kibana"
 
-        second = index_folder(str(scripts), use_ai_summaries=False, storage_path=str(store_path))
+        second = index_folder(str(scripts), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
         assert second["success"] is True
         assert second["repo"] == "elastic/kibana"
 
@@ -287,16 +313,16 @@ class TestIndexFolderIdentity:
         (repo / "main.py").write_text("def a(): pass\n", encoding="utf-8")
 
         store = tmp_path / "store"
-        first = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store))
+        first = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store), identity_mode="git")
         assert first["success"] is True
 
         # Re-index the same path: must succeed.
-        second = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store))
+        second = index_folder(str(repo), use_ai_summaries=False, storage_path=str(store), identity_mode="git")
         assert second["success"] is True
 
     def test_subdir_under_no_origin_repo_merges_via_git_root(self, tmp_path):
         # v1.96: even without an origin remote, two subdirs of the same git
-        # working tree share identity (`local/<git_root_basename>-<hash>`)
+        # working tree share identity (`local/<git_root_basename>`)
         # and merge.  v1.95 gave them different per-subdir identities; that
         # behavior is no longer accessible without `git_root_identity: false`.
         repo = tmp_path / "internal-tool"
@@ -310,9 +336,9 @@ class TestIndexFolderIdentity:
         (b / "g.py").write_text("def b(): pass\n", encoding="utf-8")
 
         store_path = tmp_path / "store"
-        first = index_folder(str(a), use_ai_summaries=False, storage_path=str(store_path))
+        first = index_folder(str(a), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
         assert first["success"] is True
-        second = index_folder(str(b), use_ai_summaries=False, storage_path=str(store_path))
+        second = index_folder(str(b), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
         assert second["success"] is True
         # Same identity (git_root-derived).
         assert first["repo"] == second["repo"]
@@ -338,10 +364,10 @@ class TestIndexFolderIdentity:
         (repo_b / "b.py").write_text("def b(): pass\n", encoding="utf-8")
 
         store = tmp_path / "store"
-        first = index_folder(str(repo_a), use_ai_summaries=False, storage_path=str(store))
+        first = index_folder(str(repo_a), use_ai_summaries=False, storage_path=str(store), identity_mode="git")
         assert first["success"] is True
 
-        second = index_folder(str(repo_b), use_ai_summaries=False, storage_path=str(store))
+        second = index_folder(str(repo_b), use_ai_summaries=False, storage_path=str(store), identity_mode="git")
         assert second["success"] is False
         assert "already exists" in second["error"]
         assert str(repo_a.resolve()) in second["error"]
@@ -376,13 +402,13 @@ class TestSubdirMerge:
         (scripts / "s.py").write_text("def s(): pass\n", encoding="utf-8")
 
         store_path = tmp_path / "store"
-        index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path))
+        index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
 
         # Edit one packages file, drop the other.
         (packages / "p1.py").write_text("def p1_new(): pass\n", encoding="utf-8")
         (packages / "p2.py").unlink()
 
-        result = index_folder(str(packages), use_ai_summaries=False, storage_path=str(store_path))
+        result = index_folder(str(packages), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
         assert result["success"] is True
 
         store = IndexStore(base_path=str(store_path))
@@ -411,8 +437,8 @@ class TestSubdirMerge:
         (repo / "main.py").write_text("def main(): pass\n", encoding="utf-8")
 
         store_path = tmp_path / "store"
-        index_folder(str(packages), use_ai_summaries=False, storage_path=str(store_path))
-        index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path))
+        index_folder(str(packages), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
+        index_folder(str(repo), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
 
         store = IndexStore(base_path=str(store_path))
         loaded = store.load_index("elastic", "kibana")
@@ -433,8 +459,8 @@ class TestSubdirMerge:
         (b / "bx.py").write_text("def bx(): pass\n", encoding="utf-8")
 
         store_path = tmp_path / "store"
-        index_folder(str(a), use_ai_summaries=False, storage_path=str(store_path))
-        index_folder(str(b), use_ai_summaries=False, storage_path=str(store_path))
+        index_folder(str(a), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
+        index_folder(str(b), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
 
         store = IndexStore(base_path=str(store_path))
         loaded = store.load_index("elastic", "kibana")
@@ -475,7 +501,7 @@ class TestSubdirMerge:
         )
 
         # Re-run with v1.96 logic — should rebuild rather than merge.
-        result = index_folder(str(scripts), use_ai_summaries=False, storage_path=str(store_path))
+        result = index_folder(str(scripts), use_ai_summaries=False, storage_path=str(store_path), identity_mode="git")
         assert result["success"] is True
         warnings_text = " ".join(result.get("warnings", []))
         assert "v1.95" in warnings_text or "subdir-relative" in warnings_text

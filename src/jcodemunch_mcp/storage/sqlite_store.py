@@ -1862,6 +1862,7 @@ class SQLiteIndexStore:
             "symbol_count": symbol_count,
             "file_count": file_count,
             "git_head": meta.get("git_head", ""),
+            "git_root": meta.get("git_root", ""),
             "display_name": meta.get("display_name", ""),
             "source_root": remap(meta.get("source_root", ""), _pairs),
             "index_present": True,

@@ -9,18 +9,15 @@ from pathlib import Path
 from typing import Optional
 
 from ..storage import IndexStore
+from ..storage.git_root import resolve_index_identity
 
 logger = logging.getLogger(__name__)
 
 
-def _compute_repo_id(folder_path: Path) -> str:
-    """Compute the deterministic repo ID for a directory path.
-
-    Same formula as _local_repo_id (watcher.py) and _local_repo_name (index_folder.py).
-    """
-    resolved = folder_path.resolve()
-    digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:8]
-    return f"local/{resolved.name}-{digest}"
+def _compute_repo_id(folder_path: Path, store: Optional[IndexStore] = None) -> str:
+    """Compute the repo ID that index_folder would use for a directory path."""
+    decision = resolve_index_identity(str(folder_path), mode="config", store=store)
+    return f"{decision.owner}/{decision.name}"
 
 
 def _git_common_dir(path: Path) -> Optional[Path]:
@@ -125,7 +122,7 @@ def resolve_repo(path: str, storage_path: Optional[str] = None) -> dict:
         candidates.append(git_root)
 
     for candidate in candidates:
-        repo_id = _compute_repo_id(candidate)
+        repo_id = _compute_repo_id(candidate, store=store)
         owner, name = repo_id.split("/", 1)
         status = store.inspect_index(owner, name)
         if status.index_present:
@@ -154,7 +151,7 @@ def resolve_repo(path: str, storage_path: Optional[str] = None) -> dict:
 
     # Not indexed — return the computed ID for the best candidate
     best = candidates[0]
-    repo_id = _compute_repo_id(best)
+    repo_id = _compute_repo_id(best, store=store)
 
     # Worktree-aware canonical-index discovery (issue #277):
     # if the path is a Git worktree, look for already-indexed repos that

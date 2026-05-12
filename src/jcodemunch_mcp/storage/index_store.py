@@ -845,6 +845,8 @@ class IndexStore:
         }
         if data.get("git_head"):
             repo_entry["git_head"] = data["git_head"]
+        if data.get("git_root"):
+            repo_entry["git_root"] = data["git_root"]
         if data.get("display_name"):
             repo_entry["display_name"] = data["display_name"]
         if data.get("source_root"):
