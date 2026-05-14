@@ -351,6 +351,12 @@ DEFAULTS = {
     "server_output": "adaptive",  # "raw", "encoded", or "adaptive"
     "server_output_threshold": 0.15,  # Minimum savings ratio for adaptive mode
     "disabled_tools": ["test_summarizer"],
+    # When True, `disabled_tools` may include `set_tool_tier` and
+    # `announce_model`. Default False keeps the in-session tier-switch
+    # safety net intact; opt-in is for users who want to claw back two
+    # tool slots (e.g. against Antigravity's 50-tool cap) and accept that
+    # they cannot switch tiers mid-session. Issue #299, requested by @kecsap.
+    "allow_disabling_tier_controls": False,
     "descriptions": {},
     "transport": "stdio",
     "host": "127.0.0.1",
@@ -435,6 +441,7 @@ CONFIG_TYPES = {
     "server_output": str,
     "server_output_threshold": float,
     "disabled_tools": list,
+    "allow_disabling_tier_controls": bool,
     "descriptions": dict,
     "transport": str,
     "host": str,
@@ -1496,6 +1503,14 @@ def generate_template() -> str:
     "test_summarizer",
   // {tools_str}
   ],
+
+  // === Tier-control escape hatch (issue #299) ===
+  // By default, `set_tool_tier` and `announce_model` survive `disabled_tools`
+  // so users can't lock themselves out of in-session tier switching. Set this
+  // to true to opt out of that safety net — useful when you're at a hard tool
+  // cap (e.g. Antigravity's 50-tool limit) and want to claw back two slots,
+  // and you accept that you can't switch tiers mid-session.
+  // "allow_disabling_tier_controls": false,
 
   // === Tool Tier Bundles ===
   // Which tools belong to each tier. Edit freely. Both tool_profile (below)

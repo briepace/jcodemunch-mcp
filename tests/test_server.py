@@ -700,6 +700,101 @@ async def test_disabled_tools_empty_all_tools_present(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tier_controls_undisableable_by_default():
+    """Default behavior (issue #299): set_tool_tier and announce_model survive disabled_tools."""
+    from jcodemunch_mcp import config as config_module
+
+    orig_config = config_module._GLOBAL_CONFIG.copy()
+    config_module._GLOBAL_CONFIG.clear()
+
+    try:
+        config_module._GLOBAL_CONFIG["disabled_tools"] = ["set_tool_tier", "announce_model"]
+        # allow_disabling_tier_controls not set; defaults False
+
+        tools = await list_tools()
+        names = {t.name for t in tools}
+
+        assert "set_tool_tier" in names
+        assert "announce_model" in names
+    finally:
+        config_module._GLOBAL_CONFIG.clear()
+        config_module._GLOBAL_CONFIG.update(orig_config)
+
+
+@pytest.mark.asyncio
+async def test_tier_controls_disableable_with_escape_hatch():
+    """allow_disabling_tier_controls=True (issue #299) lets users disable tier controls."""
+    from jcodemunch_mcp import config as config_module
+
+    orig_config = config_module._GLOBAL_CONFIG.copy()
+    config_module._GLOBAL_CONFIG.clear()
+
+    try:
+        config_module._GLOBAL_CONFIG["disabled_tools"] = ["set_tool_tier", "announce_model"]
+        config_module._GLOBAL_CONFIG["allow_disabling_tier_controls"] = True
+
+        tools = await list_tools()
+        names = {t.name for t in tools}
+
+        assert "set_tool_tier" not in names
+        assert "announce_model" not in names
+        # Other tools still present.
+        assert "search_symbols" in names
+    finally:
+        config_module._GLOBAL_CONFIG.clear()
+        config_module._GLOBAL_CONFIG.update(orig_config)
+
+
+@pytest.mark.asyncio
+async def test_tier_controls_call_time_rejection_with_escape_hatch():
+    """With escape hatch on, calling set_tool_tier returns the project-disabled error."""
+    from jcodemunch_mcp import config as config_module
+    from jcodemunch_mcp.server import _reset_session_tiers
+
+    orig_config = config_module._GLOBAL_CONFIG.copy()
+    config_module._GLOBAL_CONFIG.clear()
+
+    try:
+        config_module._GLOBAL_CONFIG["disabled_tools"] = ["set_tool_tier"]
+        config_module._GLOBAL_CONFIG["allow_disabling_tier_controls"] = True
+
+        result = await call_tool("set_tool_tier", {"tier": "core"})
+        payload = json.loads(result[0].text)
+        assert "error" in payload
+        assert "disabled" in payload["error"].lower()
+    finally:
+        config_module._GLOBAL_CONFIG.clear()
+        config_module._GLOBAL_CONFIG.update(orig_config)
+        _reset_session_tiers()
+
+
+@pytest.mark.asyncio
+async def test_tier_controls_call_time_allowed_without_escape_hatch():
+    """Without escape hatch, set_tool_tier is callable even if listed in disabled_tools."""
+    from jcodemunch_mcp import config as config_module
+    from jcodemunch_mcp.server import _reset_session_tiers
+
+    orig_config = config_module._GLOBAL_CONFIG.copy()
+    config_module._GLOBAL_CONFIG.clear()
+
+    try:
+        config_module._GLOBAL_CONFIG["disabled_tools"] = ["set_tool_tier"]
+        # allow_disabling_tier_controls not set; defaults False
+
+        result = await call_tool("set_tool_tier", {"tier": "core"})
+        payload = json.loads(result[0].text)
+        # Tool actually runs (no project-disabled error). It may succeed or
+        # return a tier-related error, but NOT the "disabled in this project"
+        # message that the escape hatch unlocks.
+        if "error" in payload:
+            assert "disabled in this project" not in payload["error"]
+    finally:
+        config_module._GLOBAL_CONFIG.clear()
+        config_module._GLOBAL_CONFIG.update(orig_config)
+        _reset_session_tiers()
+
+
+@pytest.mark.asyncio
 async def test_meta_fields_null_keeps_meta_envelope():
     """meta_fields=null passes through tool-native _meta unchanged."""
     from jcodemunch_mcp import config as config_module

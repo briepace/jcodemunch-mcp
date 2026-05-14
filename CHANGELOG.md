@@ -2,6 +2,35 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.9] — 2026-05-14 — escape hatch for the `_UNDISABLEABLE_TOOLS` safety net (#299)
+
+Requested by **@kecsap** in #299, as the follow-up offered when shipping #298.
+
+The default `_UNDISABLEABLE_TOOLS = {set_tool_tier, announce_model}` guard
+exists so users can't lock themselves out of in-session tier switching. For
+users running against a hard tool-count cap (e.g. Antigravity's 50-tool
+limit), those two slots are valuable enough to be worth giving up tier
+switching for.
+
+New config key:
+
+```jsonc
+"allow_disabling_tier_controls": false  // default
+```
+
+When set to `true`, `set_tool_tier` and `announce_model` may appear in
+`disabled_tools` and will be removed from the schema (or rejected at
+call-time for project-level disabling). Default `false` preserves
+pre-1.108.9 behavior bit-for-bit.
+
+The check threads through both enforcement sites: `list_tools()` schema
+filtering and `call_tool()` project-level rejection. Config template
+gains a commented `allow_disabling_tier_controls` block with the
+Antigravity rationale.
+
+4 new tests in `tests/test_server.py` covering both flag states across
+both enforcement paths.
+
 ## [1.108.8] — 2026-05-14 — `jcodemunch_guide` honors `disabled_tools` (#298)
 
 Reported by **@kecsap** in #298: listing `jcodemunch_guide` or `set_tool_tier`

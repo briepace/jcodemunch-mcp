@@ -3308,11 +3308,15 @@ def _build_tools_list() -> list[Tool]:
         tools = [t for t in tools if t.name in allowed]
 
     # Filter out disabled tools. _UNDISABLEABLE_TOOLS (runtime tier controls)
-    # are never removed — disabling them would lock the user out of switching
-    # tiers in-session. Other meta tools (jcodemunch_guide) honor disabled_tools.
+    # are never removed by default — disabling them would lock the user out of
+    # switching tiers in-session. Other meta tools (jcodemunch_guide) honor
+    # disabled_tools. Users who set `allow_disabling_tier_controls=true` opt
+    # out of the safety net (issue #299) — useful for tool-cap budgets.
     disabled = config_module.get("disabled_tools", [])
+    allow_disable_tier = config_module.get("allow_disabling_tier_controls", False)
+    protected = frozenset() if allow_disable_tier else _UNDISABLEABLE_TOOLS
     if disabled:
-        disabled_set = set(disabled) - _UNDISABLEABLE_TOOLS
+        disabled_set = set(disabled) - protected
         if disabled_set:
             tools = [t for t in tools if t.name not in disabled_set]
 
@@ -3320,7 +3324,7 @@ def _build_tools_list() -> list[Tool]:
     # _ALWAYS_PRESENT_TOOLS but explicitly in disabled_tools stays hidden.
     disabled_set = set(disabled) if disabled else set()
     present_names = {t.name for t in tools}
-    missing = _ALWAYS_PRESENT_TOOLS - present_names - (disabled_set - _UNDISABLEABLE_TOOLS)
+    missing = _ALWAYS_PRESENT_TOOLS - present_names - (disabled_set - protected)
     if missing:
         tools.extend(t for t in all_tools if t.name in missing)
 
@@ -3667,7 +3671,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         # Project-level tool disabling: check if tool is disabled for this project
         # Global disabled tools are filtered out in list_tools() schema; project-level
         # rejection happens here since schema is global (can't be changed per-project).
-        if name not in _UNDISABLEABLE_TOOLS and config_module.is_tool_disabled(name, repo=repo_arg):
+        # `allow_disabling_tier_controls=true` lets users opt out of the
+        # _UNDISABLEABLE_TOOLS safety net (issue #299).
+        allow_disable_tier = config_module.get("allow_disabling_tier_controls", False, repo=repo_arg)
+        protected_at_call = frozenset() if allow_disable_tier else _UNDISABLEABLE_TOOLS
+        if name not in protected_at_call and config_module.is_tool_disabled(name, repo=repo_arg):
             return [TextContent(type="text", text=json.dumps({
                 "error": (
                     f"Tool '{name}' is disabled in this project's configuration. "
