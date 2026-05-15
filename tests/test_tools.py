@@ -1155,3 +1155,40 @@ class TestIndexFolderGitignoreWarning:
         msg = gitignore_warnings[0]
         assert "500" in msg or "file" in msg.lower()
         assert ".gitignore" in msg
+
+    def test_project_config_override_threshold_suppresses_warning(self, tmp_path):
+        """Issue #301 audit: gitignore_warn_threshold honors .jcodemunch.jsonc.
+
+        A project setting the threshold above the file count should suppress
+        the warning, proving the project-config override threads through to
+        the index_folder.py call site (not just to global config).
+        """
+        from jcodemunch_mcp.tools.index_folder import index_folder
+        from jcodemunch_mcp import config as config_module
+
+        repo_dir = tmp_path / "monorepo"
+        repo_dir.mkdir()
+        for i in range(500):
+            (repo_dir / f"file_{i}.py").write_text(f"# file {i}\n")
+
+        repo_key = str(repo_dir.resolve())
+        orig_project = config_module._PROJECT_CONFIGS.copy()
+        config_module._PROJECT_CONFIGS.clear()
+        try:
+            config_module._PROJECT_CONFIGS[repo_key] = {
+                "gitignore_warn_threshold": 10_000,  # well above 500
+            }
+            result = index_folder(
+                str(repo_dir),
+                use_ai_summaries=False,
+                storage_path=str(tmp_path / "store"),
+            )
+            warnings = result.get("warnings", [])
+            assert not any("No .gitignore" in w for w in warnings), (
+                "Project-level gitignore_warn_threshold=10000 should have "
+                "suppressed the warning at 500 files. If this fires, the "
+                "fix at index_folder.py:1321 was reverted (issue #301)."
+            )
+        finally:
+            config_module._PROJECT_CONFIGS.clear()
+            config_module._PROJECT_CONFIGS.update(orig_project)

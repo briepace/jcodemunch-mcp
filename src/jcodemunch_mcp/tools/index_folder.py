@@ -871,8 +871,9 @@ def index_folder(
         logger.warning(warning_msg)
         warnings.append(warning_msg)
 
-    # Redact absolute path from responses when redact_source_root is enabled
-    _redact = _config.get("redact_source_root", False)
+    # Redact absolute path from responses when redact_source_root is enabled.
+    # Project-overridable (#301): per-repo privacy preferences are valid.
+    _redact = _config.get("redact_source_root", False, repo=str(folder_path))
     _folder_display = folder_path.name if _redact else str(folder_path)
     store = IndexStore(base_path=storage_path)
     _pairs_for_identity = parse_path_map()
@@ -1318,7 +1319,10 @@ def index_folder(
 
         # Warn when no root .gitignore is present and the file count is large —
         # a common cause of bloated indexes that then overflow get_file_tree.
-        gitignore_warn_threshold = _config.get("gitignore_warn_threshold", 500)
+        # Project-overridable (#301): big monorepos vs small repos want different thresholds.
+        gitignore_warn_threshold = _config.get(
+            "gitignore_warn_threshold", 500, repo=str(folder_path)
+        )
         if (
             gitignore_warn_threshold > 0
             and not (folder_path / ".gitignore").exists()
@@ -1339,12 +1343,16 @@ def index_folder(
                 result["warnings"] = warnings
             return result
 
-        # Discover context providers (dbt, terraform, etc.)
-        _providers_enabled = context_providers and _config.get("context_providers", True)
+        # Discover context providers (dbt, terraform, etc.).
+        # Project-overridable (#301): per-repo feature toggle for context providers.
+        _providers_enabled = context_providers and _config.get(
+            "context_providers", True, repo=str(folder_path)
+        )
         active_providers = discover_providers(folder_path) if _providers_enabled else []
         # Gate SQL-dependent providers: when SQL is removed from languages config,
         # filter out the dbt provider to avoid unnecessary detection overhead.
-        if active_providers and not _config.is_language_enabled("sql"):
+        # Project-overridable (#301): `languages` is the canonical per-project gate.
+        if active_providers and not _config.is_language_enabled("sql", repo=str(folder_path)):
             active_providers = [p for p in active_providers if p.name != "dbt"]
             if active_providers:
                 names = ", ".join(p.name for p in active_providers)

@@ -50,7 +50,8 @@ def search_columns(
         Dict with matching columns and _meta envelope.
     """
     start = time.perf_counter()
-    hard_cap = _config.get("max_results", 500)
+    # Project-overridable (#301): per-repo result caps are sensible.
+    hard_cap = _config.get("max_results", 500, repo=repo)
     max_results = max(1, min(max_results, hard_cap))
 
     try:

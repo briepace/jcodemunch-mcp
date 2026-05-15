@@ -93,6 +93,8 @@ def resolve_viewer_path() -> str | None:
     paths continue to go through the strict `_looks_executable` check so a
     misspelled path doesn't get silently replaced by whatever is on ``PATH``.
     """
+    # Global-only by design (#301): the viewer binary lives on the user's
+    # machine, not in any indexed repo. No per-repo override surface.
     configured = config_module.get("mermaid_viewer_path", "")
     if configured:
         if _looks_like_bare_name(configured):

@@ -147,12 +147,16 @@ def index_file(
             "duration_seconds": round(time.monotonic() - t0, 2),
         }
 
-    # Discover context providers (same env var check as index_folder)
-    _providers_enabled = context_providers and _config.get("context_providers", True)
+    # Discover context providers (same env var check as index_folder).
+    # Project-overridable (#301): per-repo feature toggle.
+    _providers_enabled = context_providers and _config.get(
+        "context_providers", True, repo=str(source_root)
+    )
     active_providers = discover_providers(source_root) if _providers_enabled else []
     # Gate SQL-dependent providers: when SQL is removed from languages config,
     # filter out the dbt provider to avoid unnecessary detection overhead.
-    if active_providers and not _config.is_language_enabled("sql"):
+    # Project-overridable (#301): per-project language gating.
+    if active_providers and not _config.is_language_enabled("sql", repo=str(source_root)):
         active_providers = [p for p in active_providers if p.name != "dbt"]
 
     # Shared pipeline: parse, enrich, summarize, extract metadata

@@ -2,6 +2,54 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.13] — 2026-05-15 — project-config plumbing audit (#301)
+
+Follow-up to #300. The audit issue asked: how many other `_config.get()`
+call sites under `src/jcodemunch_mcp/tools/` have the same bug shape
+(reading a project-overridable key without passing `repo=`, so
+`.jcodemunch.jsonc` overrides are silently dropped)?
+
+Audit scope was tools/*.py only, only `_config.get()` reads at tool
+execution time. ~14 call sites surveyed; 9 were bugs of the #300 shape,
+4 were correctly global-by-design (now commented as such in code), 2
+were already correct.
+
+**Bugs fixed (9 sites, 5 files):**
+
+- `index_folder.py:875` `redact_source_root` — per-repo privacy
+  preferences now honored.
+- `index_folder.py:1321` `gitignore_warn_threshold` — monorepo and
+  small-repo can set different thresholds.
+- `index_folder.py:1343` `context_providers` — per-repo toggle for the
+  dbt / terraform discovery.
+- `index_folder.py:1347` `is_language_enabled("sql")` — per-project
+  language gating now reaches the SQL-provider filter.
+- `index_file.py:151` `context_providers` (same fix).
+- `index_file.py:155` `is_language_enabled("sql")` (same fix).
+- `get_repo_outline.py:167` `staleness_days` — per-repo freshness
+  expectations now honored.
+- `get_file_tree.py:42` `file_tree_max_files` — per-repo result caps.
+- `search_columns.py:53` `max_results` — per-repo result caps.
+
+All 9 sites now pass `repo=` (folder path, source root, or repo
+identifier as appropriate). Each fix carries a `Project-overridable (#301)`
+inline comment marking the audit decision; future contributors editing
+these sites have explicit signal that the `repo=` is load-bearing.
+
+**Global-by-design (4 sites, commented):** `embed_repo.py:39`
+(per-project embedding models break cross-project semantic search),
+`render_diagram.py:1104` and `mermaid_viewer.py:96` (server-level
+viewer wiring), `test_summarizer.py:45` (diagnostic for global state).
+These carry a `Global-only by design (#301)` comment so they don't get
+mistakenly "fixed" later.
+
+**Regression test:** `test_project_config_override_threshold_suppresses_warning`
+in `tests/test_tools.py` proves the project-config override flows
+through `index_folder` to the `gitignore_warn_threshold` call site.
+One test covers the audit pattern; the remaining 8 fixes are mechanical
+applications of the same shape and rely on the inline `(#301)` markers
+plus the established #300 pattern for code-review catch.
+
 ## [1.108.12] — 2026-05-15 — `.jcodemunch.jsonc` extra_ignore_patterns now honored (#300)
 
 Reported by **@domis86** in #300 with a clean Claude-assisted diagnosis.

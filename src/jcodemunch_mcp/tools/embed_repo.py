@@ -36,6 +36,10 @@ def _detect_provider() -> Optional[tuple[str, str]]:
     if is_onnxruntime_available() and is_model_available():
         return ("local_onnx", MODEL_NAME)
 
+    # Global-only by design (#301): per-project embedding models would
+    # break cross-project semantic search consistency. Audit decision: if
+    # per-repo embedding model selection ever becomes a feature, _detect_provider
+    # needs a repo arg threaded from embed_repo().
     st_model = (_config.get("embed_model", "") or os.environ.get("JCODEMUNCH_EMBED_MODEL", "")).strip()
     if st_model:
         return ("sentence_transformers", st_model)

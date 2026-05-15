@@ -1101,6 +1101,8 @@ def render_diagram(
 
     if open_in_viewer:
         from .. import config as config_module
+        # Global-only by design (#301): server-level wiring for the local
+        # mmd-viewer subprocess; not a per-repo gate.
         if config_module.get("render_diagram_viewer_enabled", False):
             from .mermaid_viewer import open_diagram
             viewer_result = open_diagram(result.get("mermaid", ""))

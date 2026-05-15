@@ -41,7 +41,9 @@ def test_summarizer(timeout_ms: int = 15000) -> dict[str, Any]:
         "error": None,
     }
 
-    # Step 1: Check if AI summaries are enabled
+    # Step 1: Check if AI summaries are enabled.
+    # Global-only by design (#301): this is a diagnostic tool probing the
+    # server-level summarizer config, not a per-repo behavior gate.
     raw = _config.get("use_ai_summaries", "auto")
     result["use_ai_summaries"] = raw
 

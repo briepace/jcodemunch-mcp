@@ -163,8 +163,9 @@ def get_repo_outline(
                         f"({current_sha[:12]}). Run index_folder to refresh."
                     )
         else:
-            # GitHub repo or no git: fall back to time-based check
-            staleness_days = _config.get("staleness_days", 7)
+            # GitHub repo or no git: fall back to time-based check.
+            # Project-overridable (#301): per-repo freshness expectations.
+            staleness_days = _config.get("staleness_days", 7, repo=repo)
             indexed_dt = datetime.fromisoformat(index.indexed_at)
             if indexed_dt.tzinfo is None:
                 indexed_dt = indexed_dt.replace(tzinfo=timezone.utc)

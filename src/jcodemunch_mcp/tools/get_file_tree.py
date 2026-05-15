@@ -37,9 +37,10 @@ def get_file_tree(
     """
     start = time.perf_counter()
 
-    # Resolve cap: per-call override → config → hardcoded fallback
+    # Resolve cap: per-call override → config → hardcoded fallback.
+    # Project-overridable (#301): per-repo caps are sensible.
     if max_files is None:
-        max_files = _config.get("file_tree_max_files", _DEFAULT_MAX_FILES)
+        max_files = _config.get("file_tree_max_files", _DEFAULT_MAX_FILES, repo=repo)
     max_files = max(1, max_files)  # guard against 0 or negative
 
     index, error, _status = load_repo_index_or_error(repo, storage_path)
