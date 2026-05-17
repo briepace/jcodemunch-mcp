@@ -75,11 +75,19 @@ def signature_fallback(symbol: Symbol) -> str:
 
 @dataclass
 class BaseSummarizer:
-    """Base class for AI batch summarizers with shared prompt/parse logic."""
+    """Base class for AI batch summarizers with shared prompt/parse logic.
+
+    The optional `repo` field carries the active source_root for the index
+    being summarized, so per-call `_config.get("...", repo=self.repo)` reads
+    honor project-level overrides in `.jcodemunch.jsonc`. Without this, the
+    summarizer was global-only at runtime — surfaced by @slazarov on #300
+    and tracked as #304.
+    """
 
     model: str = ""
     max_tokens_per_batch: int = 500
     client: object = None
+    repo: Optional[str] = None
     _consecutive_failures: int = field(default=0, init=False, repr=False)
     _circuit_broken: bool = field(default=False, init=False, repr=False)
     _failure_lock: threading.Lock = field(
@@ -93,7 +101,7 @@ class BaseSummarizer:
 
     def _record_failure(self) -> None:
         """Increment failure counter; trip circuit breaker if threshold reached."""
-        max_failures = _config.get("summarizer_max_failures", 3)
+        max_failures = _config.get("summarizer_max_failures", 3, repo=self.repo)
         with self._failure_lock:
             self._consecutive_failures += 1
             if max_failures > 0 and self._consecutive_failures >= max_failures:
@@ -255,12 +263,12 @@ class BatchSummarizer(BaseSummarizer):
 
             api_key = os.environ.get("ANTHROPIC_API_KEY")
             if api_key:
-                cfg_model = (_config.get("summarizer_model", "") or "").strip()
+                cfg_model = (_config.get("summarizer_model", "", repo=self.repo) or "").strip()
                 self.model = cfg_model or os.environ.get("ANTHROPIC_MODEL", self.model)
                 base_url = os.environ.get("ANTHROPIC_BASE_URL")
                 kwargs = {"api_key": api_key}
                 if base_url:
-                    allow_remote = _config.get("allow_remote_summarizer", False)
+                    allow_remote = _config.get("allow_remote_summarizer", False, repo=self.repo)
                     if _is_localhost_url(base_url) or allow_remote:
                         kwargs["base_url"] = base_url
                     else:
@@ -328,7 +336,7 @@ class GeminiBatchSummarizer(BaseSummarizer):
 
             api_key = os.environ.get("GOOGLE_API_KEY")
             if api_key:
-                cfg_model = (_config.get("summarizer_model", "") or "").strip()
+                cfg_model = (_config.get("summarizer_model", "", repo=self.repo) or "").strip()
                 self.model = cfg_model or os.environ.get("GOOGLE_MODEL", self.model)
                 genai.configure(api_key=api_key)
                 self.client = genai.GenerativeModel(self.model)
@@ -389,7 +397,7 @@ class OpenAIBatchSummarizer(BaseSummarizer):
         if self.api_base:
             # Strip trailing slash if present
             # Security: restrict to localhost unless explicitly overridden
-            allow_remote = _config.get("allow_remote_summarizer", False)
+            allow_remote = _config.get("allow_remote_summarizer", False, repo=self.repo)
             if not _is_localhost_url(self.api_base) and not allow_remote:
                 logger.warning(
                     "OPENAI_API_BASE points to non-localhost URL (%s). "
@@ -398,7 +406,7 @@ class OpenAIBatchSummarizer(BaseSummarizer):
                 )
                 self.api_base = None
                 return
-            cfg_model = (_config.get("summarizer_model", "") or "").strip()
+            cfg_model = (_config.get("summarizer_model", "", repo=self.repo) or "").strip()
             if cfg_model:
                 self.model = cfg_model
             elif not self.api_base or self.api_base == os.environ.get("OPENAI_API_BASE", "").rstrip("/"):
@@ -551,19 +559,20 @@ class OpenAIBatchSummarizer(BaseSummarizer):
                     sym.summary = signature_fallback(sym)
 
 
-def get_model_name() -> Optional[str]:
+def get_model_name(repo: Optional[str] = None) -> Optional[str]:
     """Return the configured summarizer_model override, or None if unset.
 
-    Reads the summarizer_model config key. Returns the stripped value, or None
-    if the key is empty or not set.
+    Reads the summarizer_model config key, honoring project-level overrides
+    in `.jcodemunch.jsonc` when `repo` is given (#304). Returns the stripped
+    value, or None if the key is empty or not set.
     """
-    val = _config.get("summarizer_model", "")
+    val = _config.get("summarizer_model", "", repo=repo)
     if not val:
         return None
     return str(val).strip() or None
 
 
-def _create_summarizer() -> Optional[BaseSummarizer]:
+def _create_summarizer(repo: Optional[str] = None) -> Optional[BaseSummarizer]:
     """Return the appropriate summarizer based on tri-state use_ai_summaries + provider config.
 
     Tri-state semantics for use_ai_summaries:
@@ -571,8 +580,12 @@ def _create_summarizer() -> Optional[BaseSummarizer]:
     - True (bool, explicit): use summarizer_provider + summarizer_model from config;
       falls back to auto-detect if provider is empty/unset.
     - "auto" / "true" / anything else truthy: auto-detect by env vars (legacy behavior).
+
+    `repo` (when given) routes all config reads through the project-aware path
+    so `.jcodemunch.jsonc` overrides for `summarizer_model`, `summarizer_provider`,
+    and `use_ai_summaries` are honored at runtime (#304).
     """
-    raw = _config.get("use_ai_summaries", "auto")
+    raw = _config.get("use_ai_summaries", "auto", repo=repo)
 
     # Normalize to disabled / explicit / auto
     if isinstance(raw, bool):
@@ -586,16 +599,16 @@ def _create_summarizer() -> Optional[BaseSummarizer]:
     if disabled:
         return None
 
-    model_override = get_model_name()
+    model_override = get_model_name(repo=repo)
 
     if explicit_mode:
         # Use summarizer_provider from config; fall back to auto-detect if unset
-        explicit_provider = (_config.get("summarizer_provider", "") or "").lower().strip()
+        explicit_provider = (_config.get("summarizer_provider", "", repo=repo) or "").lower().strip()
         if explicit_provider == "":
             logger.warning(
                 "use_ai_summaries is 'true' but summarizer_provider is not set; falling back to auto-detect"
             )
-            name = get_provider_name()
+            name = get_provider_name(repo=repo)
         elif explicit_provider not in _VALID_PROVIDERS:
             logger.warning(
                 "summarizer_provider '%s' is not a valid provider; falling back to auto-detect. "
@@ -603,23 +616,24 @@ def _create_summarizer() -> Optional[BaseSummarizer]:
                 explicit_provider,
                 ", ".join(sorted(_VALID_PROVIDERS - {"none"})),
             )
-            name = get_provider_name()
+            name = get_provider_name(repo=repo)
         else:
             name = None if explicit_provider == "none" else explicit_provider
     else:
-        name = get_provider_name()
+        name = get_provider_name(repo=repo)
 
     if name == "anthropic":
-        s = BatchSummarizer()
+        s = BatchSummarizer(repo=repo)
         return s if s.client else None
     if name == "gemini":
-        s = GeminiBatchSummarizer()
+        s = GeminiBatchSummarizer(repo=repo)
         return s if s.client else None
     if name == "openai":
         s = _make_openai_compat(
             api_key=os.environ.get("OPENAI_API_KEY", "local-llm"),
             base_url=os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1"),
             model=model_override or os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            repo=repo,
         )
         return s if s.client else None
     if name == "minimax":
@@ -628,6 +642,7 @@ def _create_summarizer() -> Optional[BaseSummarizer]:
                 api_key=os.environ.get("MINIMAX_API_KEY"),
                 base_url="https://api.minimax.io/v1",
                 model=model_override or "minimax-m2.7",
+                repo=repo,
             )
         except ValueError:
             return None
@@ -638,6 +653,7 @@ def _create_summarizer() -> Optional[BaseSummarizer]:
                 api_key=os.environ.get("ZHIPUAI_API_KEY"),
                 base_url="https://api.z.ai/api/paas/v4/",
                 model=model_override or "glm-5",
+                repo=repo,
             )
         except ValueError:
             return None
@@ -648,6 +664,7 @@ def _create_summarizer() -> Optional[BaseSummarizer]:
                 api_key=os.environ.get("OPENROUTER_API_KEY"),
                 base_url="https://openrouter.ai/api/v1",
                 model=model_override or "meta-llama/llama-3.3-70b-instruct:free",
+                repo=repo,
             )
         except ValueError:
             return None
@@ -655,13 +672,16 @@ def _create_summarizer() -> Optional[BaseSummarizer]:
     return None
 
 
-def get_provider_name() -> Optional[str]:
+def get_provider_name(repo: Optional[str] = None) -> Optional[str]:
     """Return the active summarizer provider name, or None if disabled/unset.
 
     Priority: summarizer_provider config key > JCODEMUNCH_SUMMARIZER_PROVIDER env var > auto-detect by key.
     Auto-detect order: Anthropic > Gemini > OpenAI-compatible > MiniMax > GLM-5 > OpenRouter.
+
+    `repo` routes the config read through the project-aware path so a
+    `summarizer_provider` set in `.jcodemunch.jsonc` is honored (#304).
     """
-    explicit = (_config.get("summarizer_provider", "") or os.environ.get("JCODEMUNCH_SUMMARIZER_PROVIDER", "")).lower().strip()
+    explicit = (_config.get("summarizer_provider", "", repo=repo) or os.environ.get("JCODEMUNCH_SUMMARIZER_PROVIDER", "")).lower().strip()
     if explicit in _VALID_PROVIDERS:
         return None if explicit == "none" else explicit
 
@@ -675,11 +695,12 @@ def _make_openai_compat(
     api_key: Optional[str],
     base_url: str,
     model: str,
+    repo: Optional[str] = None,
 ) -> OpenAIBatchSummarizer:
     """Factory helper for OpenAI-compatible providers."""
     if not api_key:
         raise ValueError("Missing API key for OpenAI-compatible summarizer")
-    return OpenAIBatchSummarizer(model=model, api_base=base_url, api_key=api_key)
+    return OpenAIBatchSummarizer(model=model, api_base=base_url, api_key=api_key, repo=repo)
 
 
 def summarize_symbols_simple(symbols: list[Symbol]) -> list[Symbol]:
@@ -702,7 +723,11 @@ def summarize_symbols_simple(symbols: list[Symbol]) -> list[Symbol]:
     return symbols
 
 
-def summarize_symbols(symbols: list[Symbol], use_ai: bool = True) -> list[Symbol]:
+def summarize_symbols(
+    symbols: list[Symbol],
+    use_ai: bool = True,
+    repo: Optional[str] = None,
+) -> list[Symbol]:
     """Full three-tier summarization.
 
     Tier 1: Docstring extraction (free)
@@ -717,6 +742,12 @@ def summarize_symbols(symbols: list[Symbol], use_ai: bool = True) -> list[Symbol
       5. ZHIPUAI_API_KEY set or provider=glm         → GLM-5
       6. OPENROUTER_API_KEY set or provider=openrouter → OpenRouter
       - None set               → skip to Tier 3
+
+    `repo` (absolute path of the index source_root) routes config reads
+    through the project-aware path so `summarizer_provider` /
+    `summarizer_model` / `use_ai_summaries` set in `.jcodemunch.jsonc` are
+    honored at runtime (#304). Defaults to None for callers that don't have
+    a repo context, preserving the global-only behavior.
     """
     # Tier 1: Extract from docstrings
     for sym in symbols:
@@ -725,7 +756,7 @@ def summarize_symbols(symbols: list[Symbol], use_ai: bool = True) -> list[Symbol
 
     # Tier 2: AI summarization for remaining symbols
     if use_ai:
-        summarizer = _create_summarizer()
+        summarizer = _create_summarizer(repo=repo)
         if summarizer:
             symbols = summarizer.summarize_batch(symbols)
 

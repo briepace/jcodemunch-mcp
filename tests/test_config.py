@@ -1344,12 +1344,13 @@ class TestSummarizerModelDisplay:
             # The warning hint for #304 only fires when project-only.
             assert "#304" not in sm_lines[0]
 
-    def test_summarizer_model_project_only_shows_runtime_warning(
+    def test_summarizer_model_project_only_now_displays_cleanly(
         self, capsys, monkeypatch
     ):
-        """When summarizer_model is in project config but not global, the
-        display surfaces the runtime gap (#304) instead of pretending the
-        project value will be honored."""
+        """After #304 runtime fix, project-level summarizer_model flows through
+        cleanly — the project-aware shim returns it, runtime honors it, and the
+        display tags it [project] without the v1.108.17 'not honored by runtime'
+        warning that #304 has now resolved."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             self._setup(
@@ -1366,9 +1367,12 @@ class TestSummarizerModelDisplay:
             assert sm_lines, f"summarizer_model row missing; got: {captured}"
             row = sm_lines[0]
             assert "Qwen3.6-Plus" in row
-            assert "#304" in row, (
-                "expected #304 reference to surface runtime-gap honestly; "
-                f"got: {row}"
+            assert "[project]" in row, (
+                f"expected [project] source tag now that runtime honors it; got: {row}"
+            )
+            assert "#304" not in row, (
+                "the runtime-gap warning was specific to v1.108.17 and is "
+                f"obsolete after the #304 runtime fix; got: {row}"
             )
 
     def test_openai_model_row_uses_configured_summarizer_model(

@@ -100,7 +100,10 @@ def summarize_repo(
         owner, name, len(symbols), force,
     )
 
-    symbols = summarize_symbols(symbols, use_ai=True)
+    # Pass source_root as `repo` so project-aware config reads honor
+    # `.jcodemunch.jsonc` overrides for summarizer_model / provider (#304).
+    _index_source_root = getattr(index, "source_root", "") or None
+    symbols = summarize_symbols(symbols, use_ai=True, repo=_index_source_root)
 
     updated = sum(1 for sym in symbols if sym.summary != before.get(sym.id, ""))
     skipped = len(symbols) - updated

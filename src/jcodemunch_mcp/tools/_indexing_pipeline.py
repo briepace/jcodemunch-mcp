@@ -154,6 +154,7 @@ def deferred_summarize(
     symbols: list[Symbol],
     file_contents: dict[str, str],
     use_ai_summaries: bool = True,
+    repo: Optional[str] = None,
 ) -> list[Symbol]:
     """Fill in AI summaries for symbols in a background thread.
 
@@ -165,6 +166,9 @@ def deferred_summarize(
         symbols: Symbols parsed by parse_immediate (with empty summaries).
         file_contents: rel_path -> content (used for file-level summarization).
         use_ai_summaries: Whether to use AI summarization.
+        repo: Index source_root (#304) — passed through so
+            `summarizer_model`/`summarizer_provider` from `.jcodemunch.jsonc`
+            are honored. Defaults to None (global-only, pre-#304 behavior).
 
     Returns:
         Updated symbols with filled-in AI summaries.
@@ -176,7 +180,7 @@ def deferred_summarize(
     for s in symbols:
         symbols_map[s.file].append(s)
     # Call AI summarizer
-    summarized = summarize_symbols(symbols, use_ai=True)
+    summarized = summarize_symbols(symbols, use_ai=True, repo=repo)
     logger.debug("Deferred summarization complete for %d symbols", len(summarized))
     return summarized
 
@@ -240,8 +244,8 @@ def parse_and_prepare_incremental(
     if providers and new_symbols:
         enrich_symbols(new_symbols, providers)
 
-    # 3. Summarize
-    new_symbols = summarize_symbols(new_symbols, use_ai=use_ai_summaries)
+    # 3. Summarize (repo passed for project-aware config reads, #304)
+    new_symbols = summarize_symbols(new_symbols, use_ai=use_ai_summaries, repo=repo)
 
     # 4. Build symbols-by-file map, file summaries, file languages
     symbols_map: dict[str, list] = defaultdict(list)
@@ -376,10 +380,10 @@ def parse_and_prepare_full(
                 "Summary preservation: %d symbols reuse existing, %d need AI summarization",
                 len(already_summarized), len(needs_summary),
             )
-            summarized = summarize_symbols(needs_summary, use_ai=use_ai_summaries) if needs_summary else []
+            summarized = summarize_symbols(needs_summary, use_ai=use_ai_summaries, repo=repo) if needs_summary else []
             all_symbols = summarized + already_summarized
         else:
-            all_symbols = summarize_symbols(all_symbols, use_ai=use_ai_summaries)
+            all_symbols = summarize_symbols(all_symbols, use_ai=use_ai_summaries, repo=repo)
 
     # 4. Rebuild symbols_by_file after summarization (summaries may update fields)
     file_symbols_map: dict[str, list] = defaultdict(list)

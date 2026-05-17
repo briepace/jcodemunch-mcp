@@ -861,7 +861,7 @@ def test_openai_summarizer_timeout_config():
         },
         clear=True,
     ), patch("jcodemunch_mcp.summarizer.batch_summarize._config.get",
-             side_effect=lambda k, d=None: True if k == "allow_remote_summarizer" else d), \
+             side_effect=lambda k, d=None, **kwargs: True if k == "allow_remote_summarizer" else d), \
          patch("httpx.Client") as mock_httpx:
         summarizer = OpenAIBatchSummarizer()
         assert summarizer.client is not None
@@ -877,7 +877,7 @@ def test_openai_summarizer_timeout_config():
         },
         clear=True,
     ), patch("jcodemunch_mcp.summarizer.batch_summarize._config.get",
-             side_effect=lambda k, d=None: True if k == "allow_remote_summarizer" else d), \
+             side_effect=lambda k, d=None, **kwargs: True if k == "allow_remote_summarizer" else d), \
          patch("httpx.Client") as mock_httpx:
         summarizer = OpenAIBatchSummarizer()
         assert summarizer.client is not None
@@ -894,7 +894,7 @@ def test_get_model_name_returns_none_when_empty():
     """get_model_name() returns None when summarizer_model config is empty."""
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: "" if k == "summarizer_model" else d,
+        side_effect=lambda k, d=None, **kwargs: "" if k == "summarizer_model" else d,
     ):
         assert get_model_name() is None
 
@@ -903,7 +903,7 @@ def test_get_model_name_returns_value_when_set():
     """get_model_name() returns the model string when summarizer_model is configured."""
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: "my-custom-model" if k == "summarizer_model" else d,
+        side_effect=lambda k, d=None, **kwargs: "my-custom-model" if k == "summarizer_model" else d,
     ):
         assert get_model_name() == "my-custom-model"
 
@@ -912,7 +912,7 @@ def test_get_model_name_strips_whitespace():
     """get_model_name() strips surrounding whitespace from the model value."""
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: "  claude-haiku  " if k == "summarizer_model" else d,
+        side_effect=lambda k, d=None, **kwargs: "  claude-haiku  " if k == "summarizer_model" else d,
     ):
         assert get_model_name() == "claude-haiku"
 
@@ -928,7 +928,7 @@ def test_create_summarizer_disabled_when_false():
     """_create_summarizer() returns None when use_ai_summaries is False (bool)."""
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: False if k == "use_ai_summaries" else d,
+        side_effect=lambda k, d=None, **kwargs: False if k == "use_ai_summaries" else d,
     ):
         assert _create_summarizer() is None
 
@@ -938,7 +938,7 @@ def test_create_summarizer_disabled_when_string_false(falsy_val):
     """_create_summarizer() returns None for each falsy string value of use_ai_summaries."""
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: falsy_val if k == "use_ai_summaries" else d,
+        side_effect=lambda k, d=None, **kwargs: falsy_val if k == "use_ai_summaries" else d,
     ):
         assert _create_summarizer() is None
 
@@ -949,7 +949,7 @@ def test_create_summarizer_auto_mode_no_providers(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: "auto" if k == "use_ai_summaries" else d,
+        side_effect=lambda k, d=None, **kwargs: "auto" if k == "use_ai_summaries" else d,
     ):
         assert _create_summarizer() is None
 
@@ -966,7 +966,7 @@ def test_create_summarizer_auto_mode_detects_provider(monkeypatch):
         _cfg_module._GLOBAL_CONFIG["allow_remote_summarizer"] = True
         with patch(
             "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-            side_effect=lambda k, d=None: (
+            side_effect=lambda k, d=None, **kwargs: (
                 "auto" if k == "use_ai_summaries"
                 else "" if k == "summarizer_model"
                 else True if k == "allow_remote_summarizer"
@@ -997,7 +997,7 @@ def test_create_summarizer_model_override_applied_to_glm(monkeypatch):
         _cfg_module._GLOBAL_CONFIG["allow_remote_summarizer"] = True
         with patch(
             "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-            side_effect=lambda k, d=None: (
+            side_effect=lambda k, d=None, **kwargs: (
                 "auto" if k == "use_ai_summaries"
                 else "glm-6-turbo" if k == "summarizer_model"
                 else True if k == "allow_remote_summarizer"
@@ -1021,7 +1021,7 @@ def test_create_summarizer_explicit_true_no_provider_warns_and_autodetects(monke
         monkeypatch.delenv(key, raising=False)
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: (
+        side_effect=lambda k, d=None, **kwargs: (
             True if k == "use_ai_summaries"
             else "" if k in ("summarizer_provider", "summarizer_model")
             else d
@@ -1053,7 +1053,7 @@ def test_anthropic_model_override_via_config():
         ):
             with patch(
                 "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-                side_effect=lambda k, d=None: "claude-override-model" if k == "summarizer_model" else d,
+                side_effect=lambda k, d=None, **kwargs: "claude-override-model" if k == "summarizer_model" else d,
             ):
                 from jcodemunch_mcp.summarizer.batch_summarize import BatchSummarizer
 
@@ -1086,7 +1086,7 @@ def test_gemini_model_override_via_config():
         ):
             with patch(
                 "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-                side_effect=lambda k, d=None: "gemini-override-model" if k == "summarizer_model" else d,
+                side_effect=lambda k, d=None, **kwargs: "gemini-override-model" if k == "summarizer_model" else d,
             ):
                 from jcodemunch_mcp.summarizer.batch_summarize import GeminiBatchSummarizer
 
@@ -1106,7 +1106,7 @@ def test_openai_model_override_via_config(monkeypatch):
 
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: (
+        side_effect=lambda k, d=None, **kwargs: (
             "auto" if k == "use_ai_summaries"
             else "my-openai-override" if k == "summarizer_model"
             else d
@@ -1133,7 +1133,7 @@ def test_minimax_model_override_via_config(monkeypatch):
         _cfg_module._GLOBAL_CONFIG["allow_remote_summarizer"] = True
         with patch(
             "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-            side_effect=lambda k, d=None: (
+            side_effect=lambda k, d=None, **kwargs: (
                 "auto" if k == "use_ai_summaries"
                 else "minimax-m3" if k == "summarizer_model"
                 else True if k == "allow_remote_summarizer"
@@ -1161,7 +1161,7 @@ def test_summarizer_model_config_beats_openai_model_env(monkeypatch):
 
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: (
+        side_effect=lambda k, d=None, **kwargs: (
             "auto" if k == "use_ai_summaries"
             else "config-model-wins" if k == "summarizer_model"
             else d
@@ -1219,7 +1219,7 @@ def test_circuit_breaker_trips_after_consecutive_failures():
 
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: 3 if k == "summarizer_max_failures" else 1 if k == "summarizer_concurrency" else d,
+        side_effect=lambda k, d=None, **kwargs: 3 if k == "summarizer_max_failures" else 1 if k == "summarizer_concurrency" else d,
     ):
         summarizer.summarize_batch(symbols, batch_size=10)
 
@@ -1255,7 +1255,7 @@ def test_circuit_breaker_resets_on_success():
 
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: 3 if k == "summarizer_max_failures" else 1 if k == "summarizer_concurrency" else d,
+        side_effect=lambda k, d=None, **kwargs: 3 if k == "summarizer_max_failures" else 1 if k == "summarizer_concurrency" else d,
     ):
         summarizer.summarize_batch(symbols, batch_size=10)
 
@@ -1284,7 +1284,7 @@ def test_circuit_breaker_disabled_when_zero():
 
     with patch(
         "jcodemunch_mcp.summarizer.batch_summarize._config.get",
-        side_effect=lambda k, d=None: 0 if k == "summarizer_max_failures" else 1 if k == "summarizer_concurrency" else d,
+        side_effect=lambda k, d=None, **kwargs: 0 if k == "summarizer_max_failures" else 1 if k == "summarizer_concurrency" else d,
     ):
         summarizer.summarize_batch(symbols, batch_size=10)
 
@@ -1304,7 +1304,7 @@ def test_test_summarizer_disabled():
 
     with patch(
         "jcodemunch_mcp.tools.test_summarizer._config.get",
-        side_effect=lambda k, d=None: "false" if k == "use_ai_summaries" else d,
+        side_effect=lambda k, d=None, **kwargs: "false" if k == "use_ai_summaries" else d,
     ):
         result = run_test()
 
@@ -1318,7 +1318,7 @@ def test_test_summarizer_no_provider():
 
     with patch(
         "jcodemunch_mcp.tools.test_summarizer._config.get",
-        side_effect=lambda k, d=None: "auto" if k == "use_ai_summaries" else d,
+        side_effect=lambda k, d=None, **kwargs: "auto" if k == "use_ai_summaries" else d,
     ), patch(
         "jcodemunch_mcp.tools.test_summarizer.get_provider_name",
         return_value=None,
@@ -1344,7 +1344,7 @@ def test_test_summarizer_ok():
 
     with patch(
         "jcodemunch_mcp.tools.test_summarizer._config.get",
-        side_effect=lambda k, d=None: "auto" if k == "use_ai_summaries" else d,
+        side_effect=lambda k, d=None, **kwargs: "auto" if k == "use_ai_summaries" else d,
     ), patch(
         "jcodemunch_mcp.tools.test_summarizer.get_provider_name",
         return_value="anthropic",
@@ -1376,7 +1376,7 @@ def test_test_summarizer_fallback():
 
     with patch(
         "jcodemunch_mcp.tools.test_summarizer._config.get",
-        side_effect=lambda k, d=None: "auto" if k == "use_ai_summaries" else d,
+        side_effect=lambda k, d=None, **kwargs: "auto" if k == "use_ai_summaries" else d,
     ), patch(
         "jcodemunch_mcp.tools.test_summarizer.get_provider_name",
         return_value="openrouter",
@@ -1388,3 +1388,136 @@ def test_test_summarizer_fallback():
 
     assert result["status"] == "fallback"
     assert "signature" in result["error"].lower()
+
+
+# ─── #304: project-aware runtime config reads ──────────────────────────────
+
+
+class TestProjectAwareSummarizer:
+    """Regression: jcm#304. batch_summarize.py read summarizer_model and
+    summarizer_provider from _GLOBAL_CONFIG only (no repo= passed), so
+    project-level overrides in .jcodemunch.jsonc were silently dropped at
+    runtime. The fix threads `repo` through summarize_symbols ->
+    _create_summarizer -> provider __init__ -> _config.get(..., repo=).
+    """
+
+    def _isolated_configs(self, monkeypatch, tmp_path, project_config: dict):
+        """Set up an isolated config environment: empty global config, a
+        project config at <tmp>/project/.jcodemunch.jsonc, and Path.cwd /
+        Path.home redirected so config loading uses the temp dir."""
+        from jcodemunch_mcp.config import _GLOBAL_CONFIG, _PROJECT_CONFIGS
+        _GLOBAL_CONFIG.clear()
+        _PROJECT_CONFIGS.clear()
+
+        storage = tmp_path / "storage"
+        storage.mkdir()
+        (storage / "config.jsonc").write_text("{}", encoding="utf-8")
+
+        project = tmp_path / "project"
+        project.mkdir()
+        if project_config:
+            import json
+            (project / ".jcodemunch.jsonc").write_text(
+                json.dumps(project_config), encoding="utf-8"
+            )
+
+        monkeypatch.setenv("CODE_INDEX_PATH", str(storage))
+        from pathlib import Path as _P
+        monkeypatch.setattr(_P, "home", classmethod(lambda cls: tmp_path))
+        for k in ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_BASE",
+                  "MINIMAX_API_KEY", "ZHIPUAI_API_KEY", "OPENROUTER_API_KEY",
+                  "OPENAI_MODEL", "ANTHROPIC_MODEL", "GOOGLE_MODEL",
+                  "JCODEMUNCH_SUMMARIZER_PROVIDER",
+                  "JCODEMUNCH_SUMMARIZER_MODEL"):
+            monkeypatch.delenv(k, raising=False)
+
+        # Force load_config to pick up the empty config.jsonc.
+        from jcodemunch_mcp import config as _cfg
+        _cfg.load_config(str(storage))
+        # Load the project config so _PROJECT_CONFIGS is populated.
+        _cfg.load_project_config(str(project))
+
+        return project
+
+    def test_get_model_name_returns_project_value(self, tmp_path, monkeypatch):
+        project = self._isolated_configs(
+            monkeypatch, tmp_path,
+            project_config={"summarizer_model": "Qwen3.6-Plus"},
+        )
+        from jcodemunch_mcp.summarizer.batch_summarize import get_model_name
+        # Without repo: still sees global only (which is empty here).
+        assert get_model_name() is None
+        # With repo: project-aware lookup returns the project value.
+        assert get_model_name(repo=str(project)) == "Qwen3.6-Plus"
+
+    def test_get_provider_name_returns_project_value(self, tmp_path, monkeypatch):
+        project = self._isolated_configs(
+            monkeypatch, tmp_path,
+            project_config={"summarizer_provider": "anthropic"},
+        )
+        from jcodemunch_mcp.summarizer.batch_summarize import get_provider_name
+        # Without repo: empty global means None.
+        assert get_provider_name() is None
+        # With repo: project override is honored.
+        assert get_provider_name(repo=str(project)) == "anthropic"
+
+    def test_anthropic_summarizer_picks_up_project_model(self, tmp_path, monkeypatch):
+        """The runtime path that was broken: when ANTHROPIC_API_KEY is set
+        and the project config overrides summarizer_model, the resulting
+        BatchSummarizer.model reflects the project value (not the env
+        ANTHROPIC_MODEL or the dataclass default)."""
+        project = self._isolated_configs(
+            monkeypatch, tmp_path,
+            project_config={"summarizer_model": "claude-haiku-from-project"},
+        )
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+
+        # Stub the anthropic SDK so we don't need it installed.
+        import sys
+        import types as _types
+        stub = _types.ModuleType("anthropic")
+        stub.Anthropic = lambda **kwargs: object()  # any non-None
+        monkeypatch.setitem(sys.modules, "anthropic", stub)
+
+        from jcodemunch_mcp.summarizer.batch_summarize import BatchSummarizer
+        s = BatchSummarizer(repo=str(project))
+        assert s.model == "claude-haiku-from-project"
+
+    def test_create_summarizer_threads_repo_through(self, tmp_path, monkeypatch):
+        """End-to-end: _create_summarizer(repo=X) selects the provider
+        per X's project config AND constructs an instance carrying repo=X."""
+        project = self._isolated_configs(
+            monkeypatch, tmp_path,
+            project_config={
+                "summarizer_provider": "anthropic",
+                "summarizer_model": "claude-from-project",
+                "use_ai_summaries": True,
+            },
+        )
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+
+        import sys, types as _types
+        stub = _types.ModuleType("anthropic")
+        stub.Anthropic = lambda **kwargs: object()
+        monkeypatch.setitem(sys.modules, "anthropic", stub)
+
+        from jcodemunch_mcp.summarizer.batch_summarize import (
+            _create_summarizer,
+            BatchSummarizer,
+        )
+        s = _create_summarizer(repo=str(project))
+        assert isinstance(s, BatchSummarizer)
+        assert s.repo == str(project)
+        assert s.model == "claude-from-project"
+
+    def test_create_summarizer_without_repo_keeps_global_only(self, tmp_path, monkeypatch):
+        """Pre-#304 behavior preserved when no repo is passed: global config
+        only, project overrides are not consulted."""
+        project = self._isolated_configs(
+            monkeypatch, tmp_path,
+            project_config={"summarizer_provider": "anthropic"},
+        )
+        # No ANTHROPIC_API_KEY in env; no global summarizer_provider; no repo
+        # → should return None (auto-detect finds nothing).
+        from jcodemunch_mcp.summarizer.batch_summarize import _create_summarizer
+        assert _create_summarizer() is None

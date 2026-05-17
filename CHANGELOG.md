@@ -2,6 +2,84 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.18] - 2026-05-17 - summarizer runtime honors project config (#304)
+
+Patch release. Closes #304 (the runtime gap I flagged when shipping
+v1.108.17's display fix).
+
+## The gap
+
+`batch_summarize.py` read every summarizer-related config key from
+`_GLOBAL_CONFIG` only (no `repo=` passed). So a user with
+`summarizer_model` in `.jcodemunch.jsonc` saw the runtime ignore it —
+the AI summarizer used the env-var fallback or hardcoded default
+instead of their configured value. Same plumbing-audit shape as
+#300 / #301 but in summarizer code.
+
+## The fix
+
+Thread `repo` from caller down to provider `__init__` so every
+`_config.get(...)` call passes through the project-aware path:
+
+```
+summarize_symbols(symbols, use_ai, repo=<source_root>)
+  └─ _create_summarizer(repo)
+       ├─ _config.get("use_ai_summaries", repo=repo)
+       ├─ _config.get("summarizer_provider", repo=repo)
+       ├─ get_provider_name(repo=repo)
+       ├─ get_model_name(repo=repo)
+       └─ BatchSummarizer(repo=repo)  (or Gemini/OpenAI variant)
+            └─ _config.get("summarizer_model", repo=self.repo)
+            └─ _config.get("allow_remote_summarizer", repo=self.repo)
+            └─ _config.get("summarizer_max_failures", repo=self.repo)
+```
+
+`BaseSummarizer` gained a `repo: Optional[str] = None` dataclass field
+that all three concrete provider subclasses (Anthropic, Gemini,
+OpenAI-compatible) inherit and pass to their config reads. The
+`_make_openai_compat` factory also threads `repo` through to the
+underlying `OpenAIBatchSummarizer` constructor.
+
+Caller updates:
+
+- `tools/_indexing_pipeline.py`: `deferred_summarize`,
+  `parse_and_prepare_incremental`, `parse_and_prepare_full` now pass
+  `repo=` (already had a `repo` parameter, just needed to forward it).
+- `tools/index_folder.py`: two `summarize_symbols` call sites + the
+  `deferred_summarize` daemon thread now pass `str(folder_path)`.
+- `tools/summarize_repo.py`: passes `getattr(index, "source_root", None)`.
+
+Defaults to `None` everywhere, so callers without a repo context keep
+pre-#304 global-only behavior (no surprise regression for tests or
+custom integrations).
+
+## Display follow-up
+
+v1.108.17 added a "project value not honored by runtime — see #304"
+warning to `config --check` for the project-only `summarizer_model`
+case. That warning is now obsolete: the display reverts to a clean
+`[project]` source tag since the runtime actually honors the override.
+The provider-specific `ANTHROPIC_MODEL` / `GOOGLE_MODEL` /
+`OPENAI_MODEL` rows also pick up the project-aware value.
+
+## Tests
+
+5 new regression tests in `tests/test_summarizer.py::TestProjectAwareSummarizer`:
+`get_model_name`/`get_provider_name` return project values with
+`repo=` and global values without, `BatchSummarizer(repo=)` picks up
+project `summarizer_model`, `_create_summarizer(repo=)` threads `repo`
+through end-to-end, and the no-repo path keeps the pre-#304 global-only
+contract. Updated 1 existing test in `TestSummarizerModelDisplay` whose
+"runtime warning" assertion was specific to the v1.108.17 transition
+state and is now obsolete.
+
+23 unrelated tests in `test_summarizer.py` had lambda mocks shaped
+`side_effect=lambda k, d=None: ...` that broke on the new `repo=`
+kwarg; all updated to `lambda k, d=None, **kwargs: ...` for forward
+compat. No behavior change in those tests.
+
+Full suite: 4426 passing.
+
 ## [1.108.17] - 2026-05-17 - `config --check` reflects `summarizer_model` (#300 follow-up; #304 filed)
 
 Patch release. Surfaced by @slazarov on #300: setting

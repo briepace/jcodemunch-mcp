@@ -963,7 +963,7 @@ def index_folder(
                 )
                 return
 
-            summarized = deferred_summarize(symbols, file_contents, use_ai_summaries=True)
+            summarized = deferred_summarize(symbols, file_contents, use_ai_summaries=True, repo=repo_full)
             if not summarized:
                 return
 
@@ -1777,10 +1777,10 @@ def index_folder(
                 _needs_summary, _already_summarized = _split_for_summarization(
                     all_symbols, _folder_existing_summaries, _folder_unchanged_files
                 )
-                _summarized = summarize_symbols(_needs_summary, use_ai=use_ai_summaries) if _needs_summary else []
+                _summarized = summarize_symbols(_needs_summary, use_ai=use_ai_summaries, repo=str(folder_path)) if _needs_summary else []
                 all_symbols = _summarized + _already_summarized
             else:
-                all_symbols = summarize_symbols(all_symbols, use_ai=use_ai_summaries)
+                all_symbols = summarize_symbols(all_symbols, use_ai=use_ai_summaries, repo=str(folder_path))
 
         # Generate file-level summaries (single-pass grouping) using shared helpers
         file_symbols_map = defaultdict(list)
