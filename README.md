@@ -7,7 +7,7 @@
 >
 > `uvx` equivalent: `uvx --from https://github.com/jgravelle/jcodemunch-mcp/releases/download/v1.108.20/jcodemunch_mcp-1.108.20-py3-none-any.whl jcodemunch-mcp`
 >
-> Sibling packages (`jdocmunch-mcp`, `jdatamunch-mcp`) are unaffected and install normally. Status, timeline, and live updates: [issue #308](https://github.com/jgravelle/jcodemunch-mcp/issues/308). Expected resolution: late the week of May 26, 2026 per the vacationing admins of PyPI.
+> Sibling packages (`jdocmunch-mcp`, `jdatamunch-mcp`) are unaffected and install normally. Status, timeline, and live updates: [issue #308](https://github.com/jgravelle/jcodemunch-mcp/issues/308). Mike Fiedler at PSF Security is out through May 26; the broader PyPI admin queue may resolve sooner.
 
 #### One-click installs:
 
