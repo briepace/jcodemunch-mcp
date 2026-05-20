@@ -297,7 +297,7 @@ Add to `.vscode/settings.json`:
 ## Google Antigravity
 
 > [!WARNING]
-> **Setup steps below are stale as of May 2026.** Antigravity revamped the desktop app UI and removed the `⋯` → MCP Servers → Manage MCP Servers → View raw config flow that these steps rely on. The new UI only exposes per-MCP permissions, not raw-config editing. Tracking at [issue #307](https://github.com/jgravelle/jcodemunch-mcp/issues/307); will update this section once the current procedure is confirmed. For the CLI, MCP config may live in a shared settings file under the user's Antigravity data directory (path TBD).
+> **Setup steps below are stale as of May 2026.** Antigravity revamped the desktop app UI and removed the `⋯` → MCP Servers → Manage MCP Servers → View raw config flow that these steps rely on. The new UI only exposes per-MCP permissions, not raw-config editing. The integration model also appears to have moved from free-form `mcpServers` JSON to an agent-skills model (`agy --ai-skills` for the CLI, equivalent to Claude Code's `~/.claude/skills/`). Tracking at [issue #307](https://github.com/jgravelle/jcodemunch-mcp/issues/307); will update once the current skill-bundle procedure is confirmed.
 
 1. Open the Agent pane
 2. Click the `⋯` menu
