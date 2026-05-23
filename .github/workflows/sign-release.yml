@@ -6,15 +6,15 @@ name: Sign release artifacts
 # existing `gh release create` flow gains forward-only signature coverage
 # without changing the upload pattern.
 #
-# Verification by a downstream consumer:
+# Verification by a downstream consumer (Sigstore v3 bundle format):
 #
 #     curl -L -o jcodemunch_mcp-X.Y.Z-py3-none-any.whl \
 #         https://github.com/jgravelle/jcodemunch-mcp/releases/download/vX.Y.Z/jcodemunch_mcp-X.Y.Z-py3-none-any.whl
-#     curl -L -o jcodemunch_mcp-X.Y.Z-py3-none-any.whl.sigstore \
-#         https://github.com/jgravelle/jcodemunch-mcp/releases/download/vX.Y.Z/jcodemunch_mcp-X.Y.Z-py3-none-any.whl.sigstore
+#     curl -L -o jcodemunch_mcp-X.Y.Z-py3-none-any.whl.sigstore.json \
+#         https://github.com/jgravelle/jcodemunch-mcp/releases/download/vX.Y.Z/jcodemunch_mcp-X.Y.Z-py3-none-any.whl.sigstore.json
 #     python -m pip install sigstore
 #     python -m sigstore verify github \
-#         --bundle jcodemunch_mcp-X.Y.Z-py3-none-any.whl.sigstore \
+#         --bundle jcodemunch_mcp-X.Y.Z-py3-none-any.whl.sigstore.json \
 #         --repository jgravelle/jcodemunch-mcp \
 #         --workflow-name "Sign release artifacts" \
 #         jcodemunch_mcp-X.Y.Z-py3-none-any.whl
@@ -87,14 +87,17 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           cd artifacts
-          # The sigstore action writes .sigstore files alongside the inputs.
-          # Upload only those (the wheel/sdist are already on the release).
-          if ls *.sigstore 1> /dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" *.sigstore \
-                --repo "${{ github.repository }}" \
-                --clobber
-            echo "Uploaded $(ls *.sigstore | wc -l) signature bundles to release $RELEASE_TAG"
-          else
-            echo "No .sigstore files produced — nothing to upload."
+          # The sigstore-python v3 action emits .sigstore.json bundles
+          # (the modern Sigstore bundle format) alongside each signed input.
+          # Earlier versions emitted .sigstore files; we support both.
+          shopt -s nullglob
+          bundles=(*.sigstore.json *.sigstore)
+          if [ ${#bundles[@]} -eq 0 ]; then
+            echo "No .sigstore.json or .sigstore files produced — nothing to upload."
+            ls -la
             exit 1
           fi
+          gh release upload "$RELEASE_TAG" "${bundles[@]}" \
+              --repo "${{ github.repository }}" \
+              --clobber
+          echo "Uploaded ${#bundles[@]} signature bundle(s) to release $RELEASE_TAG: ${bundles[*]}"

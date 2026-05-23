@@ -96,7 +96,7 @@ signer, so verification ties an artifact back to the specific workflow
 in this repository that signed it — no long-lived signing keys, no
 external trust roots beyond the Sigstore public-good infrastructure.
 
-**Verifying a release:**
+**Verifying a release** (Sigstore v3 bundle format, `.sigstore.json`):
 
 ```bash
 TAG=v1.108.22  # or whichever release you want to verify
@@ -104,11 +104,11 @@ WHEEL=jcodemunch_mcp-${TAG#v}-py3-none-any.whl
 BASE="https://github.com/jgravelle/jcodemunch-mcp/releases/download/${TAG}"
 
 curl -L -o "${WHEEL}" "${BASE}/${WHEEL}"
-curl -L -o "${WHEEL}.sigstore" "${BASE}/${WHEEL}.sigstore"
+curl -L -o "${WHEEL}.sigstore.json" "${BASE}/${WHEEL}.sigstore.json"
 
 python -m pip install sigstore
 python -m sigstore verify github \
-    --bundle "${WHEEL}.sigstore" \
+    --bundle "${WHEEL}.sigstore.json" \
     --repository jgravelle/jcodemunch-mcp \
     --workflow-name "Sign release artifacts" \
     "${WHEEL}"
