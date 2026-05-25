@@ -442,7 +442,6 @@ _VUE_TEMPLATE_COMPONENT = re.compile(
     r"""<(?P<tag>[A-Z][\w]*|[a-z]+-[\w-]+)[\s/>]""",
     re.MULTILINE,
 )
-_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 _HTML_STANDARD_ELEMENTS = frozenset({
     # HTML5 elements
