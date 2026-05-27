@@ -307,6 +307,13 @@ So when the agent wants a symbol, jCodeMunch can fetch the exact source directly
 
 ## Start fast
 
+> **PyPI review in progress:** plain `pip install jcodemunch-mcp` /
+> `uvx jcodemunch-mcp` (and the `[extra]` variants) won't resolve while the
+> package is under PyPI admin review ([#308](https://github.com/jgravelle/jcodemunch-mcp/issues/308)).
+> Wherever a step below uses the bare name, substitute the GitHub-release wheel
+> or `git+https` install from the [top of this README](#one-click-installs). Every
+> other step is unchanged.
+
 > **Ubuntu 24.04+ / Debian 12+:** System Python is externally managed (PEP 668).
 > Use `pipx install jcodemunch-mcp` or `uv tool install jcodemunch-mcp` instead
 > of bare `pip install`.
@@ -765,6 +772,12 @@ jCodeMunch is an MCP server — it plugs into **every major agent and IDE that s
 
 **Claude Code · Claude Desktop · Cursor · Windsurf · Codex CLI · Continue · Cline · Roo Code · Zed · Goose · Hermes Agent · Paperclip** — and more.
 
+> **During the PyPI review ([#308](https://github.com/jgravelle/jcodemunch-mcp/issues/308)):**
+> any `uvx jcodemunch-mcp` or `command: uvx, args: ["jcodemunch-mcp"]` entry in the
+> table below must point at the GitHub-release wheel instead, e.g.
+> `uvx --from <wheel-url> jcodemunch-mcp`. The current wheel URL is at the
+> [top of this README](#one-click-installs).
+
 Tested configurations:
 
 | Platform | Config |
@@ -792,7 +805,9 @@ project venv and point Codex at the resolved binary directly:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -U jcodemunch-mcp
+# During the PyPI review (#308) install from the repo; revert to
+# `-U jcodemunch-mcp` once the package is back on PyPI.
+.venv/bin/pip install -U "git+https://github.com/jgravelle/jcodemunch-mcp.git"
 .venv/bin/jcodemunch-mcp --help   # confirm the binary resolves
 ```
 
