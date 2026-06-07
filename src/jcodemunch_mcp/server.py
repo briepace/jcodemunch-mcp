@@ -6382,6 +6382,17 @@ def main(argv: Optional[list[str]] = None):
         help="Emit the effective configuration as structured JSON (key/type/value/default/source) for tooling",
     )
 
+    # --- list-repos ---
+    list_repos_parser = subparsers.add_parser(
+        "list-repos",
+        help="List indexed repositories with counts, freshness, and watcher state",
+    )
+    list_repos_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit structured JSON (repo_id/counts/languages/indexed_at/freshness/watcher_state/lock_holder)",
+    )
+
     # --- claude-md ---
     claude_md_parser = subparsers.add_parser(
         "claude-md",
@@ -7023,7 +7034,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "index", "index-file", "import-trace", "claude-md", "init", "install", "install-status", "uninstall", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk", "observatory", "keyring"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "list-repos", "index", "index-file", "import-trace", "claude-md", "init", "install", "install-status", "uninstall", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "health", "file-risk", "observatory", "keyring"}
         # MCP-tool-name typos: route to the right CLI verb with a friendly hint.
         # `index_repo` and `index_folder` are MCP tools, not CLI subcommands.
         _CLI_ALIASES = {
@@ -7072,6 +7083,24 @@ def main(argv: Optional[list[str]] = None):
             init=getattr(args, "init", False),
             upgrade=getattr(args, "upgrade", False),
         )
+        return
+
+    if args.command == "list-repos":
+        from .tools.list_repos import repos_report
+        report = repos_report()
+        if getattr(args, "json", False):
+            print(json.dumps(report, indent=2))
+        elif not report:
+            print("No indexed repositories.")
+        else:
+            for r in report:
+                langs = ", ".join(f"{k}:{v}" for k, v in sorted(r["languages"].items()))
+                print(
+                    f"{r['display_name']:<28} {r['symbol_count']:>6} sym  "
+                    f"{r['file_count']:>5} files  {r['freshness']:<16} "
+                    f"watcher={r['watcher_state']}"
+                    + (f"  [{langs}]" if langs else "")
+                )
         return
 
     if args.command == "claude-md":

@@ -4,6 +4,21 @@ All notable changes to jcodemunch-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.108.36] - 2026-06-07 - `list-repos --json` cockpit view (counts + freshness + watcher state)
+
+### Added
+
+- New `list-repos` CLI subcommand. Human output lists indexed repos with symbol/
+  file counts, freshness, and watcher state; `--json` emits a structured array
+  (`repo_id`, `display_name`, `file_count`, `symbol_count`, `languages`,
+  `indexed_at`, `freshness`, `watcher_state`, `lock_holder`). Backed by a new
+  `tools.list_repos.repos_report()` that joins `list_repos` metadata with
+  `get_watch_status` (staleness + watcher lock holder) keyed by source_root.
+  Powers the jMunch Console index/watcher cockpit; general-purpose for CI and
+  dashboards. Also registered `list-repos` in the backwards-compat
+  `known_commands` set so it isn't misrouted to `serve`. Regression test in
+  `tests/test_list_repos.py`.
+
 ## [1.108.35] - 2026-06-07 - Fix CI-only test break from the v1.108.33 claude resolver
 
 ### Fixed
