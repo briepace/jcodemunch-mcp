@@ -1284,6 +1284,51 @@ class TestConfigDisplayHonorsProjectOverride:
             assert ".jcodemunch.jsonc loaded" not in captured
 
 
+class TestConfigReportGrouping:
+    """config_report emits `group` + `description` per key (for the Console's
+    grouped, self-documenting config screen)."""
+
+    def test_every_entry_has_group_and_description(self):
+        from src.jcodemunch_mcp.config import config_report
+        report = config_report()
+        assert report, "config_report should not be empty"
+        for entry in report:
+            assert "group" in entry and isinstance(entry["group"], str) and entry["group"]
+            assert "description" in entry and isinstance(entry["description"], str)
+
+    def test_known_keys_map_to_expected_sections(self):
+        from src.jcodemunch_mcp.config import config_report, _config_meta, generate_template
+        groups = {e["key"]: e["group"] for e in config_report()}
+        # report groups agree with a direct parse of the template
+        meta = _config_meta(generate_template())
+        for k, g in groups.items():
+            assert g == (meta.get(k, (None, ""))[0] or "Other")
+        # representative spot-check + catch-all fallback is non-empty
+        assert groups["use_ai_summaries"] == "AI Summarizer"
+        assert all(g for g in groups.values())
+
+    def test_descriptions_present_where_template_documents_them(self):
+        from src.jcodemunch_mcp.config import config_report
+        descs = {e["key"]: e["description"] for e in config_report()}
+        # use_ai_summaries carries an inline comment in the template
+        assert "summaries" in descs["use_ai_summaries"].lower()
+
+    def test_config_meta_parses_sections_and_comments(self):
+        from src.jcodemunch_mcp.config import _config_meta
+        template = (
+            "{\n"
+            "  // === Indexing ===\n"
+            "  // how many files to index\n"
+            '  "max_index_files": 10000,\n'
+            "  // === Transport ===\n"
+            '  "host": "127.0.0.1",\n'
+            "}\n"
+        )
+        meta = _config_meta(template)
+        assert meta["max_index_files"] == ("Indexing", "how many files to index")
+        assert meta["host"] == ("Transport", "")  # no preceding comment
+
+
 class TestSummarizerModelDisplay:
     """Regression: surfaced by @slazarov on #300 (comment 4472458576).
     `config --check` showed the OPENAI_MODEL env default even when

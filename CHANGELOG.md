@@ -4,6 +4,20 @@ All notable changes to jcodemunch-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.108.44] - 2026-06-08 - config --json emits group + description per key
+
+### Added
+
+- `config_report()` (the `config --json` payload) now includes a **`group`** and
+  **`description`** per key, derived from the config template's `=== Section ===`
+  headers and inline comments via a new one-pass `_config_meta()` parser. Keys
+  with no template section fall back to group `"Other"`; keys with no inline
+  comment get an empty description. Makes `config --json` self-documenting and
+  lets the jMunch Console render a grouped, collapsible config screen instead of
+  a flat 83-key list. General-purpose for CI/dashboards; no behavior change to
+  any config value. 4 new tests in `tests/test_config.py`
+  (`TestConfigReportGrouping`).
+
 ## [1.108.43] - 2026-06-08 - Org-rollup gate requires a multi-seat tier (Studio+)
 
 ### Changed

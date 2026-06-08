@@ -890,14 +890,50 @@ def _raw_jsonc_keys(path: Path) -> set[str]:
     return set()
 
 
+def _config_meta(template: str) -> dict[str, tuple[str | None, str]]:
+    """One pass over the config template: map each top-level key to its
+    ``(section, description)`` — the nearest preceding ``=== Section ===`` header
+    and the comment block immediately above the key. Powers grouped config UIs
+    (the Console) and self-documenting dashboards."""
+    import re
+    header_re = re.compile(r"^\s*//\s*=+\s*(.+?)\s*=+\s*$")
+    key_re = re.compile(r'^  (?:// *)?"(\w+)" *:')
+    section: str | None = None
+    pending: list[str] = []
+    meta: dict[str, tuple[str | None, str]] = {}
+    for line in template.splitlines():
+        hm = header_re.match(line)
+        if hm:  # === Section === header
+            section = hm.group(1).strip()
+            pending = []
+            continue
+        km = key_re.match(line)
+        if km:  # a key entry (active or commented-out) closes the comment block
+            k = km.group(1)
+            if k not in meta:
+                meta[k] = (section, " ".join(pending))
+            pending = []
+            continue
+        s = line.strip()
+        if s.startswith("//"):
+            c = s[2:].strip()
+            if c and "===" not in c:
+                pending.append(c)
+        else:  # blank line / value continuation ends the comment block
+            pending = []
+    return meta
+
+
 def config_report(repo: str | None = None) -> list[dict[str, Any]]:
     """Structured effective configuration: one entry per known key with its
-    value, default, type, and source (default / global / project).
+    value, default, type, source (default / global / project), plus the key's
+    ``group`` (config-template section) and ``description``.
 
     Machine-readable counterpart to the human `config` output — for the Console,
     CI, and dashboards. Source attribution mirrors `config`'s display: a key is
     "project" if the repo's .jcodemunch.jsonc sets it, else "global" if the
-    global config.jsonc sets it, else "default".
+    global config.jsonc sets it, else "default". ``group``/``description`` are
+    derived from the JSONC template's section headers + comments.
     """
     load_config()
     storage_path = os.environ.get("CODE_INDEX_PATH", str(Path.home() / ".code-index"))
@@ -907,6 +943,8 @@ def config_report(repo: str | None = None) -> list[dict[str, Any]]:
         load_project_config(repo)
         project_keys = _raw_jsonc_keys(Path(repo) / ".jcodemunch.jsonc")
 
+    meta = _config_meta(generate_template())
+
     report: list[dict[str, Any]] = []
     for key, default in DEFAULTS.items():
         if repo and key in project_keys:
@@ -915,12 +953,15 @@ def config_report(repo: str | None = None) -> list[dict[str, Any]]:
             source = "global"
         else:
             source = "default"
+        group, description = meta.get(key, (None, ""))
         report.append({
             "key": key,
             "type": _type_label(CONFIG_TYPES.get(key)),
             "value": get(key, default, repo=repo),
             "default": default,
             "source": source,
+            "group": group or "Other",
+            "description": description,
         })
     return report
 
