@@ -6628,6 +6628,19 @@ def main(argv: Optional[list[str]] = None):
             "templates that don't want jcodemunch touching agent-policy files."
         ),
     )
+    init_parser.add_argument(
+        "--strict",
+        action="store_true",
+        dest="strict",
+        help=(
+            "Enforce munch-first hard: the PreToolUse hook DENIES native Read/Grep "
+            "inside an indexed repo (use jcm tools instead). Installs the enforcement "
+            "hooks and sets JCODEMUNCH_ENFORCE=strict in ~/.claude/settings.json. "
+            "Offset/limit reads and paths outside every indexed repo still pass; "
+            "default (no flag) stays advisory warn-only. Revert by re-running init "
+            "without --strict."
+        ),
+    )
 
     # --- install (per-agent sugar over init) ---
     install_parser = subparsers.add_parser(
@@ -7243,6 +7256,7 @@ def main(argv: Optional[list[str]] = None):
             no_backup=args.no_backup,
             share_savings=getattr(args, "share_savings", None),
             minimal=getattr(args, "minimal", False),
+            strict=getattr(args, "strict", False),
         ))
 
     if args.command == "install":

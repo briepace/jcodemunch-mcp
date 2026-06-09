@@ -288,6 +288,127 @@ class TestGrepNudge:
 
 
 # ---------------------------------------------------------------------------
+# PreToolUse: strict enforcement mode (JCODEMUNCH_ENFORCE=strict)
+# ---------------------------------------------------------------------------
+
+def _assert_deny(out: str) -> str:
+    """Assert *out* is a Claude Code PreToolUse deny decision; return the reason."""
+    payload = json.loads(out)
+    hso = payload["hookSpecificOutput"]
+    assert hso["hookEventName"] == "PreToolUse"
+    assert hso["permissionDecision"] == "deny"
+    return hso["permissionDecisionReason"]
+
+
+class TestStrictEnforce:
+    """Strict mode turns the advisory nudges into hard PreToolUse denials,
+    but only where an indexed-repo jcm route can serve the call."""
+
+    def _index(self, monkeypatch, *roots):
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.hooks._indexed_source_roots",
+            lambda: [os.path.normcase(os.path.abspath(str(r))) for r in roots],
+        )
+
+    def test_strict_denies_grep_inside_indexed_repo(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("JCODEMUNCH_ENFORCE", "strict")
+        self._index(monkeypatch, tmp_path)
+        rc, out, err = _run_with_stdin(
+            run_pretooluse, _make_grep_input("Secret", cwd=str(tmp_path))
+        )
+        assert rc == 0
+        reason = _assert_deny(out)
+        assert "search_text" in reason
+        assert err == ""  # deny rides stdout JSON, not stderr
+
+    def test_strict_allows_grep_outside_indexed_repo(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("JCODEMUNCH_ENFORCE", "strict")
+        self._index(monkeypatch, tmp_path / "indexed")
+        rc, out, err = _run_with_stdin(
+            run_pretooluse, _make_grep_input("foo", cwd=str(tmp_path / "elsewhere"))
+        )
+        assert rc == 0
+        assert out == "" and err == ""  # jcm can't serve it → allow
+
+    def test_strict_denies_full_read_of_indexed_code(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("JCODEMUNCH_ENFORCE", "strict")
+        self._index(monkeypatch, tmp_path)
+        f = tmp_path / "big.py"
+        f.write_text("x = 1\n" * 2000)  # well above the 4KB gate
+        rc, out, err = _run_with_stdin(run_pretooluse, _make_hook_input("Read", str(f)))
+        assert rc == 0
+        reason = _assert_deny(out)
+        assert "get_symbol_source" in reason
+
+    def test_strict_allows_targeted_read_of_indexed_code(self, tmp_path, monkeypatch):
+        """offset/limit reads (pre-Edit) always pass, even in strict mode."""
+        monkeypatch.setenv("JCODEMUNCH_ENFORCE", "strict")
+        self._index(monkeypatch, tmp_path)
+        f = tmp_path / "big.py"
+        f.write_text("x = 1\n" * 2000)
+        rc, out, err = _run_with_stdin(
+            run_pretooluse, _make_hook_input_with_params("Read", str(f), offset=10)
+        )
+        assert rc == 0
+        assert out == "" and err == ""
+
+    def test_strict_allows_read_outside_indexed_repo(self, tmp_path, monkeypatch):
+        """A big code file the index can't serve is allowed (no jcm route)."""
+        monkeypatch.setenv("JCODEMUNCH_ENFORCE", "strict")
+        self._index(monkeypatch, tmp_path / "indexed")
+        f = tmp_path / "loose" / "big.py"
+        f.parent.mkdir()
+        f.write_text("x = 1\n" * 2000)
+        rc, out, err = _run_with_stdin(run_pretooluse, _make_hook_input("Read", str(f)))
+        assert rc == 0
+        assert out == ""
+
+    def test_strict_allows_small_indexed_file(self, tmp_path, monkeypatch):
+        """Tiny files stay under the size gate even in strict mode."""
+        monkeypatch.setenv("JCODEMUNCH_ENFORCE", "strict")
+        self._index(monkeypatch, tmp_path)
+        f = tmp_path / "tiny.py"
+        f.write_text("x = 1\n")
+        rc, out, err = _run_with_stdin(run_pretooluse, _make_hook_input("Read", str(f)))
+        assert rc == 0
+        assert out == ""
+
+    def test_off_mode_is_fully_silent(self, tmp_path, monkeypatch):
+        """JCODEMUNCH_ENFORCE=off suppresses both the deny and the advisory nudge."""
+        monkeypatch.setenv("JCODEMUNCH_ENFORCE", "off")
+        self._index(monkeypatch, tmp_path)
+        f = tmp_path / "big.py"
+        f.write_text("x = 1\n" * 2000)
+        rc_r, out_r, err_r = _run_with_stdin(run_pretooluse, _make_hook_input("Read", str(f)))
+        rc_g, out_g, err_g = _run_with_stdin(
+            run_pretooluse, _make_grep_input("foo", cwd=str(tmp_path))
+        )
+        assert (out_r, err_r, out_g, err_g) == ("", "", "", "")
+
+    def test_advisory_default_still_warns(self, tmp_path, monkeypatch):
+        """Unset / advisory keeps the v1.108.47 warn-but-allow behavior."""
+        monkeypatch.delenv("JCODEMUNCH_ENFORCE", raising=False)
+        self._index(monkeypatch, tmp_path)
+        rc, out, err = _run_with_stdin(
+            run_pretooluse, _make_grep_input("foo", cwd=str(tmp_path))
+        )
+        assert rc == 0
+        assert out == ""  # advisory never denies
+        assert "search_text" in err
+
+    def test_unknown_value_falls_back_to_advisory(self, tmp_path, monkeypatch):
+        """A typo'd mode must never hard-block — it degrades to advisory."""
+        monkeypatch.setenv("JCODEMUNCH_ENFORCE", "stict")  # typo
+        self._index(monkeypatch, tmp_path)
+        rc, out, err = _run_with_stdin(
+            run_pretooluse, _make_grep_input("foo", cwd=str(tmp_path))
+        )
+        assert rc == 0
+        assert out == ""  # not a deny
+        assert "search_text" in err
+
+
+# ---------------------------------------------------------------------------
 # PostToolUse tests
 # ---------------------------------------------------------------------------
 

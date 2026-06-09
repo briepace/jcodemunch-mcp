@@ -108,6 +108,56 @@ class TestInstallEnforcementHooksIntegration:
         assert len(data["hooks"]["PostToolUse"]) == 1
         assert len(data["hooks"]["PreToolUse"]) == 1
 
+    def test_advisory_install_does_not_write_enforce_env(self, tmp_path, monkeypatch):
+        """A non-strict install must not invent the JCODEMUNCH_ENFORCE env key."""
+        from jcodemunch_mcp.cli.init import install_enforcement_hooks
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.init._settings_json_path",
+            lambda: tmp_path / "settings.json",
+        )
+        install_enforcement_hooks(backup=False)
+        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        assert "JCODEMUNCH_ENFORCE" not in data.get("env", {})
+
+    def test_strict_install_writes_enforce_env(self, tmp_path, monkeypatch):
+        """--strict persists env.JCODEMUNCH_ENFORCE=strict for the hook to read."""
+        from jcodemunch_mcp.cli.init import install_enforcement_hooks
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.init._settings_json_path",
+            lambda: tmp_path / "settings.json",
+        )
+        msg = install_enforcement_hooks(backup=False, strict=True)
+        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        assert data["env"]["JCODEMUNCH_ENFORCE"] == "strict"
+        assert "strict" in msg
+
+    def test_strict_env_writes_even_when_hooks_present(self, tmp_path, monkeypatch):
+        """Flipping to strict after a plain install still sets the env flag
+        (the 'hooks already present' early-return must not skip it)."""
+        from jcodemunch_mcp.cli.init import install_enforcement_hooks
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.init._settings_json_path",
+            lambda: tmp_path / "settings.json",
+        )
+        install_enforcement_hooks(backup=False)              # advisory first
+        install_enforcement_hooks(backup=False, strict=True)  # then strict
+        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        assert data["env"]["JCODEMUNCH_ENFORCE"] == "strict"
+        # hooks still single (not duplicated by the second call)
+        assert len(data["hooks"]["PreToolUse"]) == 1
+
+    def test_rerun_without_strict_reverts_to_advisory(self, tmp_path, monkeypatch):
+        """Re-running init without --strict resets a prior strict flag."""
+        from jcodemunch_mcp.cli.init import install_enforcement_hooks
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.init._settings_json_path",
+            lambda: tmp_path / "settings.json",
+        )
+        install_enforcement_hooks(backup=False, strict=True)
+        install_enforcement_hooks(backup=False)  # revert
+        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        assert data["env"]["JCODEMUNCH_ENFORCE"] == "advisory"
+
 
 class TestCacheKeyIndexedAt:
     """Tests for search_symbols cache key including indexed_at."""

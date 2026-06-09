@@ -62,20 +62,61 @@ _CODE_EXTENSIONS: set[str] = {
 _MIN_SIZE_BYTES = int(os.environ.get("JCODEMUNCH_HOOK_MIN_SIZE", "4096"))
 
 
+def _enforce_mode() -> str:
+    """jCodemunch enforcement tier for native file tools (``JCODEMUNCH_ENFORCE``).
+
+    * ``"advisory"`` (default): warn on stderr but **allow** — the v1.108.47
+      behavior. A hard deny here would break Read-before-Edit.
+    * ``"strict"``: **deny** a native Read/Grep that an indexed-repo jcm route
+      can already serve. Targeted reads (``offset``/``limit``), tiny files, and
+      paths outside every indexed repo still pass, so the escape hatch is always
+      one step away and jcm is never blamed for a search it can't serve.
+    * ``"off"``: no nudge, no deny — fully silent.
+
+    Unknown values fall back to ``"advisory"`` so a typo never hard-blocks tools.
+    Opt in to strict with ``jcodemunch-mcp init --strict`` (persists the env var
+    into ~/.claude/settings.json) or by exporting it yourself.
+    """
+    val = os.environ.get("JCODEMUNCH_ENFORCE", "advisory").strip().lower()
+    if val in {"strict", "deny", "block", "hard"}:
+        return "strict"
+    if val in {"off", "0", "false", "no", "none", "silent"}:
+        return "off"
+    return "advisory"
+
+
+def _emit_pretooluse_deny(reason: str) -> int:
+    """Emit a Claude Code PreToolUse ``deny`` decision (stdout JSON) and exit 0.
+
+    The deny lives in the JSON decision channel; stderr stays free for advisory
+    hints, and exit code stays 0 so the harness reads the decision, not a crash.
+    """
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }))
+    return 0
+
+
 def run_pretooluse() -> int:
-    """PreToolUse hook: nudge Claude toward jCodemunch before native file tools.
+    """PreToolUse hook: steer Claude toward jCodemunch before native file tools.
 
     Dispatches on the tool being called:
-      * ``Grep`` whose search root falls inside an indexed repo → push the agent
-        to exhaust the credited jcm retrieval routes (``search_text`` /
-        ``search_symbols`` / ``find_references``) before the raw text scan.
-      * ``Read`` on a code file above the size threshold → suggest
-        ``get_file_outline`` + ``get_symbol_source`` instead.
+      * ``Grep`` whose search root falls inside an indexed repo → the credited
+        jcm routes (``search_text`` / ``search_symbols`` / ``find_references``)
+        serve the same scan, ranked and on the savings meter.
+      * ``Read`` on a code file above the size threshold → ``get_file_outline``
+        + ``get_symbol_source`` instead.
 
-    Both warn on stderr but **allow** (exit 0): a hard deny would break the
-    Read-before-Edit workflow, and Grep must remain available as the fallback
-    once the jcm routes come up empty.  Small files, non-code files, unreadable
-    paths, and Greps outside every indexed repo are silently allowed.
+    Strength is set by ``_enforce_mode()`` (``JCODEMUNCH_ENFORCE``): the default
+    ``advisory`` tier warns on stderr but allows (so Read-before-Edit and the
+    Grep fallback keep working); ``strict`` denies the same calls but only when
+    an indexed-repo jcm route can serve them — targeted reads (``offset`` /
+    ``limit``), tiny files, non-code files, and paths outside every indexed repo
+    always pass; ``off`` is fully silent.
 
     Returns exit code (always 0 — errors are swallowed to avoid blocking).
     """
@@ -84,13 +125,19 @@ def run_pretooluse() -> int:
     except (json.JSONDecodeError, ValueError):
         return 0  # Unparseable → allow
 
+    mode = _enforce_mode()
+    if mode == "off":
+        return 0  # No nudge, no deny.
+
     tool_input = data.get("tool_input", {}) or {}
 
     # Grep is the tool that most often does a job a jcm route already covers,
-    # entirely off the savings meter — intercept it first. Defensive: a nudge
+    # entirely off the savings meter — intercept it first. Defensive: the hook
     # must never crash the agent's Grep, so swallow anything unexpected.
     if data.get("tool_name", "") == "Grep":
         try:
+            if mode == "strict":
+                return _strict_grep(tool_input, data.get("cwd", ""))
             return _nudge_grep(tool_input, data.get("cwd", ""))
         except Exception:
             return 0
@@ -118,7 +165,26 @@ def run_pretooluse() -> int:
     if tool_input.get("offset") is not None or tool_input.get("limit") is not None:
         return 0
 
-    # Full-file exploratory read on a large code file — warn but allow.
+    if mode == "strict":
+        # Strict: deny the full-file read, but only when the file lives inside an
+        # indexed repo (jcm can actually serve it). Reads outside every indexed
+        # repo pass — denying them would block work jcm can't help with.
+        try:
+            roots = _indexed_source_roots()
+            norm = os.path.normcase(os.path.abspath(file_path))
+            if roots and _path_overlaps(norm, roots):
+                return _emit_pretooluse_deny(
+                    f"jCodemunch strict mode: this {size:,}-byte code file is in an "
+                    "indexed repo. Use get_file_outline + get_symbol_source instead "
+                    "of a full Read. For an exact-line pre-Edit read, pass "
+                    "offset/limit and it will pass. (JCODEMUNCH_ENFORCE=advisory "
+                    "for warn-only, =off to disable.)"
+                )
+        except Exception:
+            return 0  # Never block on a store hiccup.
+        return 0
+
+    # Advisory: full-file exploratory read on a large code file — warn but allow.
     # Hard deny breaks the Edit workflow (Claude Code requires Read before Edit).
     # Stderr text is surfaced to the agent as guidance.
     print(
@@ -210,6 +276,23 @@ def _nudge_grep(tool_input: dict, cwd: str) -> int:
         file=sys.stderr,
     )
     return 0
+
+
+def _strict_grep(tool_input: dict, cwd: str) -> int:
+    """Strict-mode Grep branch: **deny** a Grep that targets an indexed repo so
+    the agent uses the credited jcm routes. A Grep outside every indexed repo
+    (jcm can't serve it) is allowed silently."""
+    roots = _indexed_source_roots()
+    if not roots or not _path_overlaps(_grep_search_root(tool_input, cwd), roots):
+        return 0  # Nothing indexed / outside every repo → allow.
+    pattern = (tool_input.get("pattern") or "").strip()
+    for_pat = f" for `{pattern}`" if pattern else ""
+    return _emit_pretooluse_deny(
+        f"jCodemunch strict mode: this Grep{for_pat} targets an indexed repo. Use "
+        "search_text (same scan, ranked + credited), search_symbols (definitions), "
+        "or find_references / find_importers ('where is X used / who imports this') "
+        "instead. (JCODEMUNCH_ENFORCE=advisory for warn-only, =off to disable.)"
+    )
 
 
 def run_posttooluse() -> int:

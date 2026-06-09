@@ -783,11 +783,20 @@ def install_copilot_hooks(*, dry_run: bool = False, backup: bool = True) -> str:
     return f"  wrote {hooks_path} with jcodemunch postToolUse hook"
 
 
-def install_enforcement_hooks(*, dry_run: bool = False, backup: bool = True) -> str:
+def install_enforcement_hooks(
+    *, dry_run: bool = False, backup: bool = True, strict: bool = False,
+) -> str:
     """Merge PreToolUse/PostToolUse enforcement hooks into ~/.claude/settings.json.
 
-    PreToolUse (Read)  — nudge Claude toward jCodemunch for large code files.
+    PreToolUse (Read|Grep) — steer Claude toward jCodemunch for code files and
+        searches inside an indexed repo.
     PostToolUse (Edit|Write) — auto-reindex modified files.
+
+    When ``strict`` is True, also persist ``env.JCODEMUNCH_ENFORCE = "strict"``
+    so the PreToolUse hook **denies** (rather than warns on) a native Read/Grep
+    that an indexed-repo jcm route can serve. Strict is reversible: re-running
+    without ``strict`` resets the flag to ``"advisory"`` (the key is only added,
+    never invented, for non-strict installs).
 
     Returns a status message.
     """
@@ -795,13 +804,37 @@ def install_enforcement_hooks(*, dry_run: bool = False, backup: bool = True) -> 
     data = _read_json(path)
     added = _merge_hooks(data, _enforcement_hooks(), "jcodemunch-mcp hook-p")  # matches hook-pretooluse & hook-posttooluse & hook-precompact
 
-    if not added:
+    # Persist (or revert) the strict-enforce env flag the hook reads at runtime.
+    env_changed = False
+    desired = ""
+    if strict:
+        env = data.setdefault("env", {})
+        if env.get("JCODEMUNCH_ENFORCE") != "strict":
+            env["JCODEMUNCH_ENFORCE"] = "strict"
+            env_changed, desired = True, "strict"
+    else:
+        env = data.get("env")
+        if isinstance(env, dict) and env.get("JCODEMUNCH_ENFORCE") not in (None, "advisory"):
+            env["JCODEMUNCH_ENFORCE"] = "advisory"  # revert a prior --strict
+            env_changed, desired = True, "advisory"
+
+    if not added and not env_changed:
         return f"  enforcement hooks already present in {path}"
+
+    def _bits(verb_add: str, verb_env: str) -> str:
+        parts = []
+        if added:
+            parts.append(f"{verb_add} {', '.join(added)} enforcement hooks")
+        if env_changed:
+            tier = "strict deny" if desired == "strict" else "advisory warn"
+            parts.append(f"{verb_env} JCODEMUNCH_ENFORCE={desired} ({tier})")
+        return ", ".join(parts)
+
     if dry_run:
-        return f"  would add {', '.join(added)} enforcement hooks to {path}"
+        return f"  would {_bits('add', 'set')} in {path}"
 
     _write_json(path, data, backup=backup)
-    return f"  added {', '.join(added)} enforcement hooks to {path}"
+    return f"  {_bits('added', 'set')} in {path}"
 
 
 # ---------------------------------------------------------------------------
@@ -946,6 +979,7 @@ def run_init(
     skills_scope: str = "global",
     share_savings: Optional[str] = None,
     minimal: bool = False,
+    strict: bool = False,
 ) -> int:
     """Run the init flow. Returns exit code (0 = success).
 
@@ -1149,7 +1183,9 @@ def run_init(
 
     # ----- Step 3b: Enforcement hooks (PreToolUse + PostToolUse) -----
     do_enforce = hooks  # same flag enables enforcement hooks
-    if not do_enforce and interactive:
+    if strict:
+        do_enforce = True  # --strict implies installing the hooks it strengthens
+    elif not do_enforce and interactive:
         print()
         do_enforce = _prompt_yn(
             "Install enforcement hooks (intercept Read on large code files, auto-reindex after Edit/Write)?",
@@ -1158,8 +1194,14 @@ def run_init(
     elif not do_enforce and yes and not minimal:
         do_enforce = True  # default for --yes mode (suppressed under --minimal)
     if do_enforce:
-        msg = install_enforcement_hooks(dry_run=dry_run, backup=backup)
+        msg = install_enforcement_hooks(dry_run=dry_run, backup=backup, strict=strict)
         print(f"  Enforcement:{msg}")
+        if strict and not dry_run:
+            print(
+                "  Strict mode: native Read/Grep inside an indexed repo will be "
+                "DENIED (use jcm tools; offset/limit reads still pass). Restart "
+                "your client to load it; revert with `init` (no --strict)."
+            )
         # touch the install-version stamp so `serve` startup can detect drift
         try:
             _stamp_install_version()

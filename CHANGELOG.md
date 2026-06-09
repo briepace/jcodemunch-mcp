@@ -4,6 +4,41 @@ All notable changes to jcodemunch-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.108.48] - 2026-06-09 - opt-in strict enforcement (deny native Read/Grep)
+
+### Added
+
+- **`JCODEMUNCH_ENFORCE` enforcement tier** for the PreToolUse hook, read by
+  `_enforce_mode()` in `cli/hooks.py`:
+  - `advisory` (default): warn on stderr but **allow** — unchanged v1.108.47
+    behavior. Read-before-Edit and the Grep fallback keep working.
+  - `strict`: **deny** a native Read/Grep that an indexed-repo jCodemunch route
+    can already serve, returning a Claude Code PreToolUse `deny` decision that
+    names the credited route to use instead.
+  - `off`: fully silent (no nudge, no deny).
+  - Unknown values fall back to `advisory`, so a typo can never hard-block tools.
+- **`init --strict`** (and `install_enforcement_hooks(strict=True)`): installs the
+  enforcement hooks and persists `env.JCODEMUNCH_ENFORCE = "strict"` into
+  `~/.claude/settings.json` so the hook subprocess reads it cross-platform (no
+  shell env plumbing). Re-running `init` without `--strict` resets the flag to
+  `advisory`; non-strict installs never invent the key.
+
+### Notes
+
+- **Strict is a redirect, not a wall.** Targeted reads (`offset`/`limit`, i.e.
+  pre-Edit exact-line reads), tiny files (under `JCODEMUNCH_HOOK_MIN_SIZE`),
+  non-code files, and any path outside every indexed `source_root` always pass —
+  so jCodemunch is never blamed for a search it can't serve, and the escape
+  hatch is one step away. The deny rides the stdout JSON decision channel; exit
+  code stays 0 and stderr stays free.
+- Strict is **opt-in** by design: deny-by-default would reverse the deliberate
+  "never hard-block Read-before-Edit" stance and would change a previously-
+  default behavior to raise, which the 1.x compatibility contract reserves for a
+  2.x. Default installs stay advisory.
+- 14 new tests (`TestStrictEnforce` in `tests/test_hooks.py` +
+  strict-install cases in `tests/test_post_tool_use_hook.py`). Full suite 4513
+  passed / 10 skipped. GitHub-release wheel (PyPI #308).
+
 ## [1.108.47] - 2026-06-09 - Grep-aware PreToolUse nudge
 
 ### Added
