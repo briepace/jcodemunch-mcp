@@ -4,6 +4,22 @@ All notable changes to jcodemunch-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.108.54] - 2026-06-11 - list-repos / delete-index honor CODE_INDEX_PATH
+
+### Fixed
+
+- **`list-repos` and `delete-index` CLI verbs now honor `CODE_INDEX_PATH`.**
+  Both dispatched into the store with no storage path, so they always read
+  (and for `delete-index`, deleted from) `~/.code-index` regardless of the
+  documented env override — unlike every other index-touching CLI verb.
+  Consequences: scripted callers pointing at a custom store silently operated
+  on the wrong one, and the `delete-index` CLI test, which relied on
+  `CODE_INDEX_PATH` for isolation, was deleting a real index from the
+  developer's home store on every local suite run while failing in CI where
+  the home store is empty (CI red since v1.108.50). The test now also
+  asserts store isolation explicitly so a future regression fails loudly
+  instead of destroying a real index.
+
 ## [1.108.53] - 2026-06-11 - recency window on weight tuning
 
 ### Changed

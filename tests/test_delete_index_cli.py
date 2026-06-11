@@ -44,6 +44,11 @@ def test_delete_index_cli_roundtrip(tmp_path):
 
     repos = json.loads(_run(["list-repos", "--json"], storage).stdout)
     assert repos, "expected the throwaway project to be indexed"
+    # Isolation guard: exactly one repo, and it's ours. If list-repos ever
+    # stops honoring CODE_INDEX_PATH this reads the developer's real store,
+    # and the delete below would destroy a real index. Fail loudly instead.
+    assert len(repos) == 1, f"store not isolated — saw {len(repos)} repos"
+    assert repos[0].get("source_root", "").endswith("proj"), repos[0]
     rid = repos[0]["repo_id"]
 
     # Delete it: success, exit 0, structured JSON body.
