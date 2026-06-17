@@ -8,6 +8,7 @@ from ..storage import IndexStore
 from ._utils import index_status_to_tool_error, resolve_repo
 from .get_blast_radius import _build_reverse_adjacency, _find_symbol
 from ._call_graph import build_symbols_by_file, find_direct_callers
+from .decision_context import resolve_decision_context
 
 # Max traversal depth to bound compute on pathological graphs
 _MAX_DEPTH = 5
@@ -17,6 +18,7 @@ def get_impact_preview(
     repo: str,
     symbol_id: str,
     storage_path: Optional[str] = None,
+    include_decisions: bool = False,
 ) -> dict:
     """Show what breaks if a symbol is removed or renamed.
 
@@ -29,6 +31,11 @@ def get_impact_preview(
         repo: Repository identifier (owner/repo or just repo name).
         symbol_id: Symbol name or full ID to analyse. Use search_symbols to find IDs.
         storage_path: Custom storage path.
+        include_decisions: When True, attach a read-only ``decisions`` block —
+            decision-bearing commits (revert/perf/refactor/rename/bugfix) mined
+            from the git history of the focal symbol's file and the impacted
+            files, plus a volatility read. Surface-only; nothing is persisted.
+            Default False (it spends a few git-log calls).
 
     Returns:
         Dict with:
@@ -156,7 +163,7 @@ def get_impact_preview(
             "Use get_call_hierarchy for a structured caller/callee tree."
         )
 
-    return {
+    result = {
         "repo": f"{owner}/{name}",
         "symbol": {
             "id": sym.get("id", ""),
@@ -187,3 +194,14 @@ def get_impact_preview(
             "tip": tip,
         },
     }
+
+    # Surface decision context (read-only git archaeology) only on request — the
+    # focal symbol's file first, then the impacted files. Additive: absent the
+    # flag the response is byte-identical to prior behavior.
+    if include_decisions:
+        decision_files = [sym.get("file", "")] + sorted(by_file.keys())
+        result["decisions"] = resolve_decision_context(
+            getattr(index, "source_root", None), decision_files,
+        )
+
+    return result

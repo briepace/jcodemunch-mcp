@@ -11,6 +11,7 @@ from ._utils import index_status_to_tool_error, resolve_repo, resolve_fqn
 from .package_registry import extract_root_package_from_specifier
 from ._call_graph import build_symbols_by_file, _word_match, find_direct_callers, bfs_callers
 from .find_dead_code import _is_test_file
+from .decision_context import resolve_decision_context
 
 
 def _build_reverse_adjacency(
@@ -126,6 +127,7 @@ def get_blast_radius(
     decorator_filter: Optional[str] = None,
     include_source: bool = False,
     source_budget: int = 8000,
+    include_decisions: bool = False,
 ) -> dict:
     """Find all files that would be affected if a symbol's signature or behaviour changed.
 
@@ -152,6 +154,11 @@ def get_blast_radius(
             signatures).  Enables fix-ready context in one call.
         source_budget: Max tokens for source snippets across all files (default 8000).
             Files are prioritised by reference count.
+        include_decisions: When True, attach a read-only ``decisions`` block —
+            decision-bearing commits (revert/perf/refactor/rename/bugfix) mined
+            from the git history of the focal symbol's file and the confirmed
+            affected files, plus a volatility read. Surface-only; nothing is
+            persisted. Default False (it spends a few git-log calls).
 
     Returns:
         Dict with symbol info, confirmed/potential affected files, counts, and _meta.
@@ -179,7 +186,7 @@ def get_blast_radius(
 
     # Check session cache before the expensive BFS + content scans
     repo_key = f"{owner}/{name}"
-    specific_key = (symbol, depth, call_depth, bool(cross_repo), include_depth_scores, decorator_filter, include_source, source_budget)
+    specific_key = (symbol, depth, call_depth, bool(cross_repo), include_depth_scores, decorator_filter, include_source, source_budget, include_decisions)
     cached = result_cache_get("get_blast_radius", repo_key, specific_key)
     if cached is not None:
         result = dict(cached)
@@ -463,5 +470,15 @@ def get_blast_radius(
             "last_seen": _last_seen,
             "coverage_pct": round(100 * _confirmed_count / max(1, _stamped)),
         }
+    # Decision context (read-only git archaeology) on request: focal symbol's
+    # file first, then the confirmed affected files. Additive — absent the flag
+    # the response is byte-identical to prior behavior. Computed before the cache
+    # write so a cached hit (keyed on include_decisions) carries it too.
+    if include_decisions:
+        decision_files = [sym_file] + [c["file"] for c in confirmed]
+        result["decisions"] = resolve_decision_context(
+            getattr(index, "source_root", None), decision_files,
+        )
+
     result_cache_put("get_blast_radius", repo_key, specific_key, result)
     return result

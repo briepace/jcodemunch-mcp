@@ -2001,6 +2001,11 @@ def _build_tools_list() -> list[Tool]:
                         "description": "Max tokens for source snippets across all files (default 8000). Files are prioritized by reference count.",
                         "default": 8000,
                     },
+                    "include_decisions": {
+                        "type": "boolean",
+                        "description": "When true, attach a read-only 'decisions' block: decision-bearing commits (revert/perf/refactor/rename/bugfix) mined from the git history of the focal symbol's file and the confirmed affected files, plus a volatility read ('3 reverts + 2 perf rewrites in 180d — review before changing'). Surfaced from the commit record; nothing is persisted. Default false (spends a few git-log calls).",
+                        "default": False,
+                    },
                 },
                 "required": ["repo", "symbol"]
             }
@@ -2059,6 +2064,11 @@ def _build_tools_list() -> list[Tool]:
                     "symbol_id": {
                         "type": "string",
                         "description": "Symbol name or full ID to analyse. Use search_symbols to find IDs."
+                    },
+                    "include_decisions": {
+                        "type": "boolean",
+                        "description": "When true, attach a read-only 'decisions' block: decision-bearing commits (revert/perf/refactor/rename/bugfix) mined from the git history of the focal symbol's file and the impacted files, plus a volatility read. Surfaced from the commit record; nothing is persisted. Default false (spends a few git-log calls).",
+                        "default": False,
                     },
                 },
                 "required": ["repo", "symbol_id"],
@@ -4327,6 +4337,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     decorator_filter=arguments.get("decorator_filter"),
                     include_source=arguments.get("include_source", False),
                     source_budget=arguments.get("source_budget", 8000),
+                    include_decisions=arguments.get("include_decisions", False),
                 )
             )
         elif name == "get_call_hierarchy":
@@ -4349,6 +4360,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     repo=arguments["repo"],
                     symbol_id=arguments["symbol_id"],
                     storage_path=storage_path,
+                    include_decisions=arguments.get("include_decisions", False),
                 )
             )
         elif name == "get_symbol_provenance":

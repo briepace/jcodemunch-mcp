@@ -4,6 +4,36 @@ All notable changes to jcodemunch-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.108.59] - 2026-06-17 - Decision-context surfacing in impact analysis
+
+### Added
+
+- **Read-only decision-context surfacing on `get_blast_radius` and
+  `get_impact_preview`** (new opt-in `include_decisions`, default `false`). Impact
+  analysis tells you *what* breaks; this adds *why the code is the way it is*. New
+  `tools/decision_context.py` (`resolve_decision_context`) mines the git history of
+  the focal symbol's file and the impacted files for **decision-bearing commits** —
+  reverts, performance rewrites, refactors, renames, and root-cause bugfixes —
+  reusing the existing commit classifier (`_classify_commit` / `_extract_intent`
+  from `get_symbol_provenance`). It returns a deduped, recency-ranked digest plus a
+  one-line volatility read (e.g. "8 decision-bearing commits in 180d across 5 files
+  (3 revert, 2 perf, 3 bugfix) — high-churn history; review the rationale before
+  changing"). When enabled, the response carries an additive `decisions` block.
+  - **Source is the durable git commit record**, not ephemeral agent session logs —
+    language- and agent-agnostic, and already half-parsed.
+  - **Surface-only**: a read of history attached to the response. Nothing is
+    persisted, no decision graph is written, and no user file is touched
+    (read-only charter). Bounded cost (capped files × capped commits), which is why
+    it's opt-in.
+  - Degrades honestly: GitHub-indexed repos (no local working tree) and
+    non-git source roots return an `{available: false, reason, hint}` block rather
+    than a fabricated result.
+  - Absent the flag, both tools are byte-identical to prior behavior; the
+    `get_blast_radius` result cache key now includes `include_decisions`.
+
+8 tests in `tests/test_v1_108_59.py` (git-seeded repo: category surfacing, volatility,
+cache-keying, off-path parity, no-git honest hints). Tool count stays 82.
+
 ## [1.108.58] - 2026-06-17 - Framework flow-edge resolver for get_signal_chains
 
 ### Added
