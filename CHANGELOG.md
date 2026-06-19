@@ -2,7 +2,7 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
-## [Unreleased]
+## [1.108.62] - 2026-06-19 - Index templating-language files over a supported underlying language
 
 ### Added
 
