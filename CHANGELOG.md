@@ -2,6 +2,22 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.64] - 2026-06-20 - Logging honors the log_file / log_level config keys
+
+### Changed
+
+- **`log_file` and `log_level` config keys now drive logging**, not just the
+  `JCODEMUNCH_LOG_FILE` / `JCODEMUNCH_LOG_LEVEL` env vars and `--log-file` /
+  `--log-level` CLI flags. `_setup_logging` previously read only the CLI/env
+  value, so a path set via `config set log_file <path>` was inert. A new
+  `_resolve_log_config` helper applies a single precedence chain — explicit CLI
+  flag, then env var, then the config key, then the hardcoded default (WARNING /
+  stderr). This lets a control plane (the jMunch Console) enable file logging by
+  writing the config key and restarting the server, with no MCP-config env-block
+  edit. Purely additive: with nothing set in CLI/env/config it resolves to
+  WARNING + stderr, exactly as before, and an explicit env/CLI from the launching
+  client still wins over the config key. New `tests/test_v1_108_64.py` (6).
+
 ## [1.108.63] - 2026-06-19 - Composite preflights consume reference evidence; cross-repo batch fails closed
 
 ### Fixed

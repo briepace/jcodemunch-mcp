@@ -5587,12 +5587,38 @@ async def run_streamable_http_server(host: str, port: int):
     await uvicorn.Server(config).serve()
 
 
+def _resolve_log_config(args) -> "tuple[str, Optional[str]]":
+    """Resolve (level_name, log_file) with precedence: an explicit CLI flag, then
+    the env var (JCODEMUNCH_LOG_LEVEL / JCODEMUNCH_LOG_FILE), then the persisted
+    config key (log_level / log_file), then the hardcoded default.
+
+    The config fallback lets `config set log_file <path>` drive logging without
+    an env-block or MCP-config edit (e.g. when the jMunch Console enables it),
+    while an explicit env var or CLI flag from the launching client still wins.
+    Additive: with no env/CLI/config set, this resolves to WARNING + stderr,
+    exactly as before."""
+    from . import config as _cfg
+    level_name = (
+        getattr(args, "log_level", None)
+        or os.environ.get("JCODEMUNCH_LOG_LEVEL")
+        or _cfg.get("log_level", "WARNING")
+        or "WARNING"
+    )
+    log_file = (
+        getattr(args, "log_file", None)
+        or os.environ.get("JCODEMUNCH_LOG_FILE")
+        or _cfg.get("log_file", None)
+    )
+    return str(level_name).upper(), log_file
+
+
 def _setup_logging(args) -> None:
-    """Configure logging from parsed args."""
-    log_level = getattr(logging, args.log_level)
+    """Configure logging from CLI args / env / config (see _resolve_log_config)."""
+    level_name, log_file = _resolve_log_config(args)
+    log_level = getattr(logging, level_name, logging.WARNING)
     handlers: list[logging.Handler] = []
-    if args.log_file:
-        log_path = Path(args.log_file).expanduser()
+    if log_file:
+        log_path = Path(log_file).expanduser()
         log_path.parent.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.FileHandler(log_path))
     else:
@@ -5611,16 +5637,18 @@ def _setup_logging(args) -> None:
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     """Add logging args shared by all subcommands."""
+    # Defaults are None so _resolve_log_config can apply the full precedence
+    # chain (CLI flag > env var > log_level/log_file config key > default).
     parser.add_argument(
         "--log-level",
-        default=os.environ.get("JCODEMUNCH_LOG_LEVEL", "WARNING"),
+        default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Log level (also via JCODEMUNCH_LOG_LEVEL env var)",
+        help="Log level. Precedence: this flag, then JCODEMUNCH_LOG_LEVEL, then the log_level config key, then WARNING.",
     )
     parser.add_argument(
         "--log-file",
-        default=os.environ.get("JCODEMUNCH_LOG_FILE"),
-        help="Log file path (also via JCODEMUNCH_LOG_FILE env var). Defaults to stderr.",
+        default=None,
+        help="Log file path. Precedence: this flag, then JCODEMUNCH_LOG_FILE, then the log_file config key, then stderr.",
     )
 
 
