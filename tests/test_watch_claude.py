@@ -698,7 +698,14 @@ class TestWatchClaudeIntegration:
                     use_ai_summaries=False,
                 )
             )
-            await asyncio.sleep(0.8)
+            # Wait for the invalidation to actually land instead of racing a
+            # fixed sleep against poll timers + the thread-pool-dispatched
+            # invalidate_cache. Under full-suite contention those slip, and a
+            # fixed sleep could cancel the poller while it was still parked in
+            # _stop_watching's `await to_thread(invalidate_cache)` (flaky 0==1).
+            deadline = asyncio.get_event_loop().time() + 5.0
+            while not invalidated and asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(0.02)
             task.cancel()
             try:
                 await task
