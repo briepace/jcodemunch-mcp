@@ -60,6 +60,7 @@ Always use jCodemunch-MCP tools for code navigation. Never fall back to Read, Gr
    - `high` → go directly to recommended symbols, max 2 supplementary reads
    - `medium` → explore recommended files, max 5 supplementary reads
    - `low` → the feature likely doesn't exist. Report the gap to the user. Do NOT search further hoping to find it.
+3. **One-call shortcut for a concrete task** — `assemble_task_context { "repo": "...", "task": "..." }` returns a single token-budgeted, source-attributed context capsule. It auto-classifies the task (explore / debug / refactor / extend / audit / review), auto-extracts anchor symbols, and runs the intent-appropriate sequence of the tools below end-to-end — so you get the whole context in one request instead of chaining the primitives by hand. Prefer it over a manual chain when the task is well-defined; fall back to step 1's routing when you need to decide *whether* the feature exists first.
 
 **Interpreting search results:**
 - If `search_symbols` returns `negative_evidence` with `verdict: "no_implementation_found"`:

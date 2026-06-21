@@ -2,6 +2,22 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.65] - 2026-06-20 - Surface the composition tools in agent-facing docs
+
+### Changed
+
+- **`assemble_task_context` is now surfaced as the single-call task
+  orchestrator** across the agent-facing surfaces, alongside `plan_turn`. The
+  injected CLAUDE.md / Cursor / Windsurf policy (`_CLAUDE_MD_POLICY`) gains an
+  "Opening move" step describing `assemble_task_context` — natural-language task
+  in, intent-classified token-budgeted source-attributed capsule out, running the
+  intent-appropriate tool sequence end-to-end in one request rather than chaining
+  primitives by hand. The README's "What you get" adds a **One-call task
+  orchestration** subsection (`assemble_task_context` / `plan_turn` /
+  `get_ranked_context`) and a matching "Why agents need this" bullet. Docs +
+  policy-constant only; no tool behavior change. `test_claude_md_policy.py` pins
+  the new policy term so the visibility can't silently regress.
+
 ## [1.108.64] - 2026-06-20 - Logging honors the log_file / log_level config keys
 
 ### Changed

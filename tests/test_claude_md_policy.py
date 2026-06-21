@@ -5,6 +5,7 @@ import pytest
 # All required terms that must be present in _CLAUDE_MD_POLICY
 REQUIRED_POLICY_TERMS = [
     ("plan_turn", "plan_turn tool for routing"),
+    ("assemble_task_context", "assemble_task_context single-call orchestrator"),
     ("negative_evidence", "negative_evidence for empty results"),
     ("high", "high confidence level"),
     ("medium", "medium confidence level"),

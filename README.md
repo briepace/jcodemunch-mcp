@@ -226,6 +226,7 @@ jCodeMunch fixes that by giving them a structured way to:
 * fall back to text search when structure alone is not enough
 * detect dead code, trace impact, rank by centrality, and map git diffs to symbols
 * plan the next turn with `plan_turn` — confidence-guided routing before the first read
+* assemble a whole task's context in one call with `assemble_task_context` — intent-classified, multi-tool, single token budget
 * track session state and avoid re-reading files the agent already explored
 
 Agents do not need bigger and bigger context windows.
@@ -247,6 +248,16 @@ Inspect repository structure and file outlines before asking for source.
 ### Lower token spend
 
 Send the model the code it needs, not 1,500 lines of collateral damage.
+
+### One-call task orchestration — the tools compose, they don't sit in isolation
+
+The retrieval primitives below are not a disconnected bag of tools the agent has to wire together by hand. Two composition tools drive the rest:
+
+- **`assemble_task_context`** takes a natural-language task and returns a single source-attributed context capsule under a token budget. It auto-classifies the task into one of six intents (explore / debug / refactor / extend / audit / review), auto-extracts the anchor symbols, and runs the intent-appropriate sequence of the tools below end-to-end — so the agent gets the whole context for a task in **one request** instead of chaining five. Every entry is tagged with its `stage` and `source_tool`, so the provenance is auditable.
+- **`plan_turn`** is the opening move: it analyzes the query against the index and returns a confidence-guided route — which tools to call, on which symbols, under a turn budget — *before* the first read. Low confidence means "this probably doesn't exist," so the agent stops instead of burning a budget hunting for a feature that isn't there.
+- **`get_ranked_context`** packs the most relevant symbols for a query into a fixed token budget (BM25 + PageRank), when you want a ranked context pack rather than a full intent sequence.
+
+The point: jCodeMunch is structured retrieval *with* an orchestration layer over it, not a pile of primitives. The composition tools run the right sub-tools, in the right order, under one budget, in one call.
 
 ### Structural queries native tools can't answer
 
