@@ -32,7 +32,7 @@ this very repo: https://jgravelle.github.io/jcodemunch-observatory/
 
 ## FREE FOR PERSONAL USE
 **Use it to make money, and Uncle J. gets a taste. Fair enough?** [details](#commercial-licenses)
-
+Our guarantee:  If jCodeMunch doesn't pay for itself, you don't pay for jCodeMunch!
 ---
 
 ## Cut code-reading token usage by **95% or more**
