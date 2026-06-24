@@ -1,3 +1,15 @@
+# jCodeMunch MCP
+
+**The leading, most token-efficient MCP server for precise GitHub source code retrieval via tree-sitter AST parsing.** Cut AI token costs **95%+** on code exploration — stop burning your context window reading entire files.
+
+> **Real results, live from production**
+> **313B+ tokens saved** · **45,000+ developers** · **$1.58M+ in AI spend avoided** · **37,500+ kg CO₂ prevented**
+> Live telemetry at **[jcodemunch.com](https://jcodemunch.com/)** — benchmark: **95% average token reduction** (15 tasks / 3 repos, 99.8% peak).
+
+Works with **Claude Code**, **Cursor**, **VS Code**, **Codex CLI**, **Continue**, **Windsurf**, and any MCP-compatible client.
+
+---
+
 #### One-click installs:
 
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_jCodeMunch-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](vscode:mcp/install?%7B%22name%22%3A%20%22jcodemunch%22%2C%20%22command%22%3A%20%22uvx%22%2C%20%22args%22%3A%20%5B%22jcodemunch-mcp%22%5D%7D)
@@ -43,10 +55,6 @@ Our guarantee:  If jCodeMunch doesn't pay for itself, you don't pay for jCodeMun
 ---
  
  
-> ### Real results, live from production
-> **313+ billion tokens saved** · **45,000+ developers** · **$1.58M+ in AI spend avoided** · **37,500+ kg CO₂ prevented**
-> Live telemetry at **[jcodemunch.com](https://jcodemunch.com/)** — benchmark: **95% average token reduction** across 15 tasks / 3 repositories.
-
 ## Cut code-reading token usage by **95% or more** with precise symbol retrieval
 
 Most AI agents explore repositories the expensive way:
@@ -115,9 +123,7 @@ is a byte the agent doesn't pay to read.
 
 ---
 
-# jCodeMunch MCP
-
-### Structured code retrieval for serious AI agents
+## Structured code retrieval for serious AI agents
 
 <!-- WHATSNEW:START -->
 #### What's new
