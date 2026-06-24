@@ -2,6 +2,40 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.80] - 2026-06-23 - Dataclass / Pydantic field extraction in outlines (#355)
+
+Closes #355 (reported by @mmashwani): `get_file_outline` listed a dataclass as a
+bare `class` row with no fields, so an agent could mistake a complete-looking
+outline for the complete class contract.
+
+### Added
+
+- **Field-centric Python classes now surface their fields as `field` child
+  symbols.** A class decorated `@dataclass` / `@dataclasses.dataclass` /
+  `@pydantic.dataclasses.dataclass` / attrs (`@define`/`@attr.s`/…), or
+  subclassing a Pydantic-style base (`BaseModel`/`BaseSettings`), gets each
+  annotated class-body assignment (`name: type` / `name: type = default`)
+  extracted as a `kind="field"` symbol with the field name, the full annotation
+  + default in the signature, the line number, and `parent` linked to the class.
+  These flow into `get_file_outline`, `search_symbols(kind="field")`, and
+  `get_symbol_source` like any other symbol.
+  - `ClassVar[...]` annotations are skipped — they are not data fields.
+  - **Plain (non-field-centric) classes are left unchanged** — a regular class's
+    typed attributes / constants are NOT turned into fields, so field rows can't
+    be confused with ordinary class attributes.
+  - Methods and the class symbol itself are unaffected (no duplication).
+  - Purely additive — a re-index picks up fields; no `INDEX_VERSION` bump.
+
+### Fixed
+
+- The heuristic file summary counted every class child as a method
+  (`Defines Foo class (3 methods)` for a 3-field dataclass). It now counts
+  methods and fields separately (`(1 methods, 2 fields)`).
+
+New `tests/test_v1_108_80.py` (9). Files: `parser/extractor.py`
+(`_extract_python_class_fields` + field-centric detection), `summarizer/
+file_summarize.py`.
+
 ## [1.108.79] - 2026-06-23 - Structured credential-file classifier (#351 redesign)
 
 Completes the broader credential classifier deferred from v1.108.78 (#351,

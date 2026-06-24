@@ -508,6 +508,13 @@ def _walk_tree(
                         next_class_scope_depth = class_scope_depth + 1
                 else:
                     next_parent = symbol
+                # Python field-centric classes (dataclass / Pydantic / attrs):
+                # surface annotated class-body fields as `field` child symbols so
+                # outlines expose the class contract, not just its name (#355).
+                if language == "python" and node.type == "class_definition":
+                    symbols.extend(
+                        _extract_python_class_fields(node, symbol, source_bytes, filename, language)
+                    )
 
     # Check for arrow/function-expression variable assignments in JS/TS
     if node.type == "variable_declarator" and language in ("javascript", "typescript", "tsx"):
@@ -1120,6 +1127,114 @@ def _extract_decorators(node, spec: LanguageSpec, source_bytes: bytes) -> list[s
             prev = prev.prev_named_sibling
 
     return decorators
+
+
+# Decorators that mark a Python class as field-centric (its annotated class-body
+# assignments are data fields, not incidental class attributes).
+_FIELD_CENTRIC_DECORATOR_NAMES = frozenset({
+    "dataclass",                      # dataclasses / pydantic.dataclasses
+    "s", "attrs", "attrib", "define", "frozen", "mutable",  # attrs / attr
+})
+# Base-class names that mark a Python class as field-centric (Pydantic, etc.).
+_FIELD_CENTRIC_BASE_NAMES = frozenset({
+    "BaseModel", "BaseSettings",
+})
+
+
+def _decorator_final_name(decorator_text: str) -> str:
+    """Reduce a decorator string to its bare callable name.
+
+    ``@dataclass(frozen=True)`` -> ``dataclass``;
+    ``@pydantic.dataclasses.dataclass`` -> ``dataclass``.
+    """
+    s = decorator_text.lstrip("@").strip()
+    s = s.split("(", 1)[0].strip()       # drop call args
+    return s.rsplit(".", 1)[-1] if s else ""
+
+
+def _node_final_name(node, source_bytes: bytes) -> str:
+    """Last dotted/subscripted identifier of a base-class expression."""
+    cur = node
+    # Subscript like Generic[T] / BaseModel[...] -> use the value.
+    while cur is not None and cur.type == "subscript":
+        cur = cur.child_by_field_name("value") or (cur.children[0] if cur.children else None)
+    if cur is None:
+        return ""
+    text = source_bytes[cur.start_byte:cur.end_byte].decode("utf-8", errors="replace")
+    return text.rsplit(".", 1)[-1].strip()
+
+
+def _is_field_centric_class(class_node, class_symbol, source_bytes: bytes) -> bool:
+    """True for dataclass / attrs / Pydantic-style classes."""
+    for dec in (class_symbol.decorators or []):
+        if _decorator_final_name(dec) in _FIELD_CENTRIC_DECORATOR_NAMES:
+            return True
+    # Base classes live in an argument_list child of the class_definition.
+    for child in class_node.children:
+        if child.type == "argument_list":
+            for base in child.children:
+                if base.type in ("identifier", "attribute", "subscript") and \
+                        _node_final_name(base, source_bytes) in _FIELD_CENTRIC_BASE_NAMES:
+                    return True
+    return False
+
+
+def _extract_python_class_fields(
+    class_node, class_symbol, source_bytes: bytes, filename: str, language: str
+) -> list[Symbol]:
+    """Emit `field` child symbols for a field-centric Python class (#355).
+
+    Only annotated class-body assignments (``name: type`` / ``name: type =
+    default``) are surfaced, and only for dataclass / attrs / Pydantic-style
+    classes — a plain class's typed class attributes are left alone. ``ClassVar``
+    annotations are skipped (they are not data fields). Field name, annotation,
+    and default all live in the signature; ``parent`` links to the class.
+    """
+    if class_node.has_error or not _is_field_centric_class(class_node, class_symbol, source_bytes):
+        return []
+
+    block = None
+    for child in class_node.children:
+        if child.type == "block":
+            block = child
+            break
+    if block is None:
+        return []
+
+    fields: list[Symbol] = []
+    for stmt in block.children:
+        if stmt.type != "assignment":
+            continue
+        left = stmt.child_by_field_name("left")
+        annotation = stmt.child_by_field_name("type")
+        if left is None or annotation is None or left.type != "identifier":
+            continue  # bare/tuple/augmented assignment — not an annotated field
+        ann_text = source_bytes[annotation.start_byte:annotation.end_byte].decode("utf-8", errors="replace")
+        if _node_final_name(annotation.children[0] if annotation.children else annotation, source_bytes) == "ClassVar" \
+                or ann_text.lstrip().startswith("ClassVar"):
+            continue
+        fname = source_bytes[left.start_byte:left.end_byte].decode("utf-8", errors="replace")
+        qualified_name = f"{class_symbol.name}.{fname}"
+        signature = source_bytes[stmt.start_byte:stmt.end_byte].decode("utf-8", errors="replace").strip()
+        fields.append(Symbol(
+            id=make_symbol_id(filename, qualified_name, "field"),
+            file=filename,
+            name=fname,
+            qualified_name=qualified_name,
+            kind="field",
+            language=language,
+            signature=signature,
+            docstring="",
+            decorators=[],
+            keywords=[],
+            parent=class_symbol.id,
+            line=stmt.start_point[0] + 1,
+            end_line=stmt.end_point[0] + 1,
+            byte_offset=stmt.start_byte,
+            byte_length=stmt.end_byte - stmt.start_byte,
+            content_hash=compute_content_hash(source_bytes[stmt.start_byte:stmt.end_byte]),
+        ))
+    return fields
 
 
 _VARIABLE_FUNCTION_TYPES = frozenset({

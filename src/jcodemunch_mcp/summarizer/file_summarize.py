@@ -20,8 +20,14 @@ def _heuristic_summary(file_path: str, symbols: list[Symbol]) -> str:
     parts = []
     if classes:
         for cls in classes[:2]:
-            method_count = sum(1 for s in symbols if s.parent and s.parent.endswith(f"::{cls.name}#class"))
-            parts.append(f"Defines {cls.name} class ({method_count} methods)")
+            suffix = f"::{cls.name}#class"
+            method_count = sum(1 for s in symbols if s.kind == "method" and s.parent and s.parent.endswith(suffix))
+            field_count = sum(1 for s in symbols if s.kind == "field" and s.parent and s.parent.endswith(suffix))
+            desc = f"Defines {cls.name} class ({method_count} methods"
+            if field_count:
+                desc += f", {field_count} fields"
+            desc += ")"
+            parts.append(desc)
     if functions:
         if len(functions) <= 3:
             names = ", ".join(f.name for f in functions)
