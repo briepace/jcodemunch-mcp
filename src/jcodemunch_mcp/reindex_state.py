@@ -212,6 +212,21 @@ def is_any_reindex_in_progress() -> bool:
         return any(s.reindexing for s in _repo_states.values())
 
 
+def has_any_reindex_state() -> bool:
+    """True if any per-repo reindex state has been recorded in this process.
+
+    reindex_state lives only in memory, populated by a watcher/server process as
+    it reindexes. A cold CLI process (notably ``list-repos``) has none, so every
+    ``get_reindex_status`` lookup would return the default. Callers can use this
+    to skip resolving each repo's id key first — that resolution is a git
+    *identity probe* per repo, and fanning it out across every indexed repo is
+    what scaled ``list-repos`` to 60s+ on many-repo hosts. When this is False the
+    probe yields nothing, so it is safe (and much faster) to skip.
+    """
+    with _states_lock:
+        return bool(_repo_states)
+
+
 # ── Freshness mode ────────────────────────────────────────────────────────────
 
 def set_freshness_mode(mode: str) -> None:

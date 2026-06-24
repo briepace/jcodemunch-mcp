@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from ..reindex_state import get_reindex_status
+from ..reindex_state import get_reindex_status, has_any_reindex_state
 from ..service_installer import service_status
 from ..storage import process_locks
 from ..watch_all import discover_local_repos
@@ -56,11 +56,21 @@ def get_watch_status(storage_path: Optional[str] = None) -> dict:
     any_failing = False
     any_watched_by_another_process = False
     my_pid = os.getpid()
+    # get_reindex_status reads in-memory per-repo state. A process that never
+    # tracked a reindex (notably a cold `list-repos` CLI) has none, so resolving
+    # each folder's repo_id key — a git identity probe via _reindex_key — is pure
+    # waste: one git subprocess per repo, which scaled list-repos to 60s+ on
+    # many-repo hosts. Only pay that resolution when there's state to look up; a
+    # process with no reindex state always returns the defaults below anyway.
+    track_reindex = has_any_reindex_state()
     for folder in discovered:
-        # reindex_state is keyed by the repo_id watcher._watch_single registers
-        # (local/<name>-<hash>), not the folder path. Resolve the same key so a
-        # failing/crash-looping watcher task is actually visible here (#353).
-        status = get_reindex_status(_reindex_key(folder, storage_path))
+        if track_reindex:
+            # reindex_state is keyed by the repo_id watcher._watch_single registers
+            # (local/<name>-<hash>), not the folder path. Resolve the same key so a
+            # failing/crash-looping watcher task is actually visible here (#353).
+            status = get_reindex_status(_reindex_key(folder, storage_path))
+        else:
+            status = {"index_stale": False, "reindex_in_progress": False, "stale_since_ms": None}
         entry = {
             "source_root": folder,
             "exists": Path(folder).is_dir(),

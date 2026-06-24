@@ -2,6 +2,35 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.81] - 2026-06-24 - Lazy git identity probe in get_watch_status / list-repos
+
+`list-repos` (and `get_watch_status`) grew slow on hosts with many indexed repos
+— 60s+ in the wild — because `get_watch_status` resolved each discovered repo's
+reindex-state key up front, and that resolution (`_reindex_key` →
+`resolve_index_identity`) is a **git identity probe**: roughly one git
+subprocess per repo (≈0.2s each here, more in worktree-heavy trees). But the
+reindex state it keys into lives only in memory, populated by a watcher/server
+process — a cold `list-repos` CLI invocation has none, so every probe resolved a
+key only to read an empty default.
+
+### Changed
+
+- **The per-repo git identity probe in `get_watch_status` is now gated on
+  `reindex_state.has_any_reindex_state()`** (new helper). When a process holds no
+  in-memory reindex state (the cold `list-repos` CLI path — e.g. the jMunch
+  Console's cockpit), key resolution is skipped entirely and each repo gets the
+  default reindex fields, eliminating the O(N) git-subprocess fan-out. A
+  watcher/server process that *has* tracked reindexes still resolves keys, so a
+  failing/crash-looping task stays visible (#353 behavior preserved). Output
+  shape is unchanged; the cold path already returned these defaults, just after
+  paying for the probes.
+
+### Tests
+
+- `tests/test_v1_108_81.py` (2): the probe is skipped (and `get_reindex_status`
+  not consulted) when there's no reindex state; keys are still resolved when
+  state is present.
+
 ## [1.108.80] - 2026-06-23 - Dataclass / Pydantic field extraction in outlines (#355)
 
 Closes #355 (reported by @mmashwani): `get_file_outline` listed a dataclass as a
