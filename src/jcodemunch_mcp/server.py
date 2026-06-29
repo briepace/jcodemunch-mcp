@@ -8416,7 +8416,8 @@ def main(argv: Optional[list[str]] = None):
                 logger.warning(
                     "jcodemunch-mcp upgraded %s -> %s but `init` has not been "
                     "re-run. Hook templates and config may be stale; run "
-                    "`jcodemunch-mcp upgrade` (or `init --hooks`) to refresh.",
+                    "`jcodemunch-mcp init --hooks` to refresh (needs no pip; "
+                    "`jcodemunch-mcp upgrade` also works on pip installs).",
                     _stamped,
                     _current_version,
                 )

@@ -2,6 +2,35 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.84] - 2026-06-28 - Install-mechanism-aware `upgrade` (#357)
+
+`jcodemunch-mcp upgrade` shelled out to `python -m pip install -U` blindly.
+pipx- and uv-managed venvs ship no `pip` module, so the command died with
+`No module named pip` and bailed *before* refreshing hooks (reported by
+@zakblacki on a pipx install). Worse, the startup version-drift warning told
+the user to run `jcodemunch-mcp upgrade` to clear it — the exact command that
+fails on pip-less installs — so the nag never cleared.
+
+### Changed
+
+- **`upgrade` detects the install mechanism instead of guessing-and-running.**
+  New `detect_install_mechanism()` (path/env heuristic, no subprocess) returns
+  the mechanism (`pip`/`pipx`/`uv`/`uvx`/`venv`) and the exact upgrade command
+  for it. When `pip` is importable, the in-process `pip install -U` runs as
+  before. When it isn't (pipx/uv), the command no longer invokes a foreign
+  package manager — it prints the correct one (`pipx upgrade jcodemunch-mcp` /
+  `uv tool upgrade jcodemunch-mcp`) and still refreshes hooks/config
+  in-process, which needs no pip. A genuine pip *failure* (network/permissions)
+  now refreshes hooks anyway and preserves the non-zero exit code rather than
+  skipping the refresh.
+- **Startup version-drift warning leads with the pip-free command.** Now
+  recommends `jcodemunch-mcp init --hooks` (needs no pip) to clear the stale-hook
+  nag, noting `upgrade` also works on pip installs.
+
+New `cli/upgrade.py` helpers `_pip_available()` / `detect_install_mechanism()` /
+`_refresh_hooks()` / `_print_external_upgrade_hint()`. No INDEX_VERSION bump.
+New `tests/test_v1_108_84.py` (11).
+
 ## [1.108.83] - 2026-06-26 - Tame watch-all CPU under WSL (#356)
 
 `watch-all` pegged 15-30% CPU continuously on WSL (reported by @Blainexi). Root
