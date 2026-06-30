@@ -2,7 +2,30 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
-## [1.108.88] - 2026-06-30 - Antigravity (Google) install target (#307)
+## [1.108.89] - 2026-06-30 - Revert the 1.108.88 Antigravity install target; document correct manual config
+
+1.108.88 added an `install antigravity` target that wrote to the **wrong**
+config locations (`~/.gemini/settings.json` and `~/.gemini/antigravity/skills/`),
+so it did not actually configure Antigravity. This release backs that out and
+replaces it with correctly-pathed documentation.
+
+### Changed
+
+- **Removed the `install antigravity` target** (and Antigravity client
+  auto-detection / alias / skill wiring) added in 1.108.88. `cli/antigravity.py`
+  deleted; `cli/skills.py` and `cli/init.py` restored to their 1.108.87 shape.
+- **README now documents the real path.** Antigravity (2.0 / IDE / CLI) loads
+  MCP servers from the shared **`~/.gemini/config/mcp_config.json`** (HOME-level
+  only) under the `mcpServers` key; shared agent skills live in
+  `~/.gemini/skills/` (CLI-only in `~/.gemini/antigravity-cli/skills/`). A copy-
+  paste `mcp_config.json` block is in the "Works with" section.
+
+No code path other than the reverted installer is affected; no INDEX_VERSION
+bump. (Antigravity has worked via manual config since #307 was closed
+2026-05-23; this just documents it correctly. A first-class installer remains
+deferred pending real demand.)
+
+## [1.108.88] - 2026-06-30 - Antigravity (Google) install target (#307) [reverted in 1.108.89]
 
 First-class onboarding for Google's Antigravity agent, which follows the Gemini
 CLI configuration contract.

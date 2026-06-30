@@ -7245,7 +7245,7 @@ def main(argv: Optional[list[str]] = None):
         "target",
         nargs="?",
         default=None,
-        help="Agent target: claude-code, claude-desktop, cursor, windsurf, continue, antigravity, all. "
+        help="Agent target: claude-code, claude-desktop, cursor, windsurf, continue, all. "
              "Omit with --list/--status for info-only output.",
     )
     install_parser.add_argument(

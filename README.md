@@ -369,7 +369,7 @@ pip install jcodemunch-mcp
 jcodemunch-mcp init
 ```
 
-`init` auto-detects your MCP clients (Claude Code, Claude Desktop, Cursor, Windsurf, Continue, Antigravity), writes their config entries, installs the CLAUDE.md prompt policy so your agent actually uses jCodeMunch, optionally installs enforcement hooks (PreToolUse read guard + PostToolUse auto-reindex + PreCompact session snapshot), optionally indexes your project, and audits your agent config files for token waste. Run `jcodemunch-mcp init --help` for all flags.
+`init` auto-detects your MCP clients (Claude Code, Claude Desktop, Cursor, Windsurf, Continue), writes their config entries, installs the CLAUDE.md prompt policy so your agent actually uses jCodeMunch, optionally installs enforcement hooks (PreToolUse read guard + PostToolUse auto-reindex + PreCompact session snapshot), optionally indexes your project, and audits your agent config files for token waste. Run `jcodemunch-mcp init --help` for all flags.
 
 > **Prefer a one-line CLAUDE.md?** From v1.71.0 the server exposes a
 > `jcodemunch_guide` tool that returns the same policy snippet `claude-md
@@ -862,7 +862,7 @@ Tested configurations:
 |----------|--------|
 | **Claude Code / Claude Desktop** | `jcodemunch-mcp init` (auto-detects and patches config) |
 | **Cursor / Windsurf / Continue** | `jcodemunch-mcp init` or manual `mcp.json` |
-| **Antigravity (Google)** | `jcodemunch-mcp install antigravity` — registers the MCP server in `~/.gemini/settings.json` and installs the skill bundle under `~/.gemini/antigravity/skills/` |
+| **Antigravity (Google)** | Add a `jcodemunch` entry to `~/.gemini/config/mcp_config.json` (shared by Antigravity 2.0 / IDE / CLI). See below. |
 | **OpenAI Codex CLI** | Add `[mcp_servers.jcodemunch]` block to `~/.codex/config.toml` (see below) |
 | **Cline / Roo Code** | Add via the MCP marketplace UI or paste `command: uvx`, `args: ["jcodemunch-mcp"]` |
 | **Zed** | Add to `settings.json` under `context_servers` |
@@ -918,6 +918,32 @@ not recommended for Codex):
 command = "uvx"
 args = ["jcodemunch-mcp"]
 ```
+</details>
+
+<details>
+<summary>Antigravity (Google) config</summary>
+
+Antigravity (2.0, IDE, and CLI) loads MCP servers from a single shared file at
+`~/.gemini/config/mcp_config.json` (HOME-level only — project-local
+`.antigravitycli/mcp_config.json` is read but not loaded). Add:
+
+```json
+// ~/.gemini/config/mcp_config.json
+{
+  "mcpServers": {
+    "jcodemunch": {
+      "command": "uvx",
+      "args": ["jcodemunch-mcp"]
+    }
+  }
+}
+```
+
+Restart Antigravity so it re-reads the config; tools appear under
+`mcp(jcodemunch/*)`. To grant the jcodemunch agent skill to all Antigravity
+tools, drop the bundle from `jcodemunch-mcp install claude-code --skills`
+(at `~/.claude/skills/jcodemunch/SKILL.md`) into the shared skills dir
+`~/.gemini/skills/jcodemunch/` (or the CLI-only `~/.gemini/antigravity-cli/skills/`).
 </details>
 
 <details>
