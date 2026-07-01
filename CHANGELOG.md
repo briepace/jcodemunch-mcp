@@ -2,6 +2,35 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.91] - 2026-07-01 - Endpoint-scoped infrastructure links (get_endpoint_impact include_infra)
+
+### Added
+
+- **`get_endpoint_impact(include_infra=True)`** — attaches an `infra` block per
+  impact that crosses the code/infra boundary at endpoint granularity: the
+  project-intel cross-references (env vars, compose services, Dockerfile
+  ENTRYPOINT/COPY, CI jobs, package/Make scripts) intersected against the
+  endpoint's blast-radius file set. "Change `GET /users`" now also surfaces the
+  `.env` variable its handler chain reads and the compose service / Dockerfile
+  that builds the code it touches. `infra.downstream[]` rows carry
+  `{category, label, source, target_file, type}` — file-granular evidence,
+  honestly labelled; de-duped by `(category, label)`. `infra._meta` reports
+  `cross_refs_scanned` / `blast_radius_files` (or `reason:
+  "no_local_source_root"` for GitHub-style indexes). `infra.exposes[]` (upstream
+  K8s Service/Ingress + compose ports) ships empty as the P2 follow-on.
+- **`collect_project_intel()`** — internal entry point factored out of
+  `get_project_intel`: discovery + parse + cross-reference over an
+  already-loaded index, so the fusion reuses one discovery pass (bounded by the
+  existing caps) instead of re-walking the tree. `get_project_intel`'s public
+  response is unchanged field-for-field.
+
+Default (`include_infra=False`) output is identical to 1.108.90. The new param
+is stripped under `compact_schemas` (standard tier; `core_compact` unchanged at
+3969). `benchmarks/schema_baseline.json` refreshed (it had been stale since
+1.108.70; ceiling tests were unaffected). New
+`tests/test_endpoint_infra_impact.py` (10). No new parser, no new store, no
+INDEX_VERSION bump.
+
 ## [1.108.90] - 2026-06-30 - New tool: get_endpoint_impact (endpoint-centric blast radius)
 
 ### Added

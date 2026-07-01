@@ -936,6 +936,173 @@ def _build_cross_references(discoveries: dict, index) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Internal entry point (already-loaded index)
+# ---------------------------------------------------------------------------
+
+def collect_project_intel(
+    index,
+    source_root: str,
+    *,
+    cats: Optional[list] = None,
+    scope_path: Optional[str] = None,
+) -> dict:
+    """Discovery + parse + cross-reference over an ALREADY-LOADED index.
+
+    Pure over ``(index, source_root, cats, scope_path)``; no repo resolution,
+    no IndexStore load. Callers that already hold an index (get_endpoint_impact)
+    reuse it instead of paying a second load. Returns::
+
+        {categories, discoveries, cross_references, discovered_files,
+         file_count, category_count}
+
+    Defensive: a missing/non-existent source_root yields empty results
+    (empty categories, [] cross_references) rather than raising, so an
+    infra-fusion caller degrades to honest-empty.
+    """
+    if cats is None:
+        cats = list(_VALID_CATEGORIES - {"all"})
+
+    if not source_root or not os.path.isdir(source_root):
+        return {
+            "categories": {}, "discoveries": {}, "cross_references": [],
+            "discovered_files": {}, "file_count": 0, "category_count": 0,
+        }
+
+    # Phase 1: Discover intel files from filesystem
+    fs_cats = {"infra", "ci", "config", "deps"}
+    need_fs = bool(fs_cats & set(cats))
+    discovered_files = (
+        _discover_intel_files(source_root, scope=scope_path) if need_fs else {}
+    )
+
+    # Phase 2: Parse discovered files
+    result_categories: dict = {}
+
+    if "infra" in cats:
+        dockerfiles = []
+        compose_services = []
+        k8s_resources = []
+
+        for fpath in discovered_files.get("infra", []):
+            content = _safe_read(fpath)
+            if content is None:
+                continue
+            rel = os.path.relpath(fpath, source_root).replace("\\", "/")
+            fname = os.path.basename(fpath).lower()
+
+            if fname == "dockerfile" or fname.startswith("dockerfile.") or fname.endswith(".dockerfile"):
+                dockerfiles.append(_parse_dockerfile(content, rel))
+            elif fname in ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"):
+                compose_services.extend(_parse_compose(content, rel))
+            else:
+                # Potential K8s manifest
+                resources = _parse_k8s_manifest(content, rel)
+                k8s_resources.extend(resources)
+
+        # Also pull Terraform from index
+        tf_data = _collect_infra_from_index(index)
+
+        result_categories["infra"] = {
+            "dockerfiles": dockerfiles,
+            "compose_services": compose_services,
+            "k8s_resources": k8s_resources[:_MAX_ITEMS_PER_CATEGORY],
+            "terraform": tf_data.get("terraform", []),
+        }
+
+    if "ci" in cats:
+        pipelines = []
+        for fpath in discovered_files.get("ci", []):
+            content = _safe_read(fpath)
+            if content is None:
+                continue
+            rel = os.path.relpath(fpath, source_root).replace("\\", "/")
+
+            if ".github/workflows" in rel.replace("\\", "/"):
+                pipelines.append(_parse_github_actions(content, rel))
+            elif ".gitlab-ci" in os.path.basename(fpath).lower():
+                pipelines.append(_parse_gitlab_ci(content, rel))
+            elif ".circleci" in rel.replace("\\", "/"):
+                pipelines.append(_parse_circleci(content, rel))
+
+        result_categories["ci"] = {"pipelines": pipelines}
+
+    if "config" in cats:
+        env_vars: list = []
+        for fpath in discovered_files.get("config", []):
+            content = _safe_read(fpath)
+            if content is None:
+                continue
+            rel = os.path.relpath(fpath, source_root).replace("\\", "/")
+            parsed = _parse_env_template(content, rel)
+            for v in parsed:
+                v["source"] = rel
+            env_vars.extend(parsed)
+
+        result_categories["config"] = {"env_vars": env_vars[:_MAX_ITEMS_PER_CATEGORY]}
+
+    if "deps" in cats:
+        scripts: list = []
+        for fpath in discovered_files.get("deps", []):
+            content = _safe_read(fpath)
+            if content is None:
+                continue
+            rel = os.path.relpath(fpath, source_root).replace("\\", "/")
+            fname = os.path.basename(fpath).lower()
+
+            if fname == "package.json":
+                scripts.extend(_parse_package_scripts(content, rel))
+            elif fname in ("makefile", "gnumakefile"):
+                scripts.extend(_parse_makefile(content, rel))
+            elif fname == "pyproject.toml":
+                scripts.extend(_parse_pyproject_scripts(content, rel))
+
+        result_categories["deps"] = {"scripts": scripts[:_MAX_ITEMS_PER_CATEGORY]}
+
+    if "api" in cats:
+        result_categories["api"] = _collect_api_intel(index)
+
+    if "data" in cats:
+        result_categories["data"] = _collect_data_intel(index)
+
+    # Phase 3: Cross-reference
+    # Build a unified discoveries dict for cross-ref builder
+    discoveries = {}
+    if "infra" in result_categories:
+        discoveries["infra"] = result_categories["infra"]
+    if "ci" in result_categories:
+        discoveries["ci"] = result_categories["ci"]
+    if "config" in result_categories:
+        discoveries["config"] = result_categories["config"]
+    if "deps" in result_categories:
+        discoveries["deps"] = result_categories["deps"]
+
+    cross_refs = _build_cross_references(discoveries, index) if discoveries else []
+
+    # Count categories with actual data
+    nonempty = 0
+    for cat_data in result_categories.values():
+        if isinstance(cat_data, dict):
+            for v in cat_data.values():
+                if isinstance(v, list) and v:
+                    nonempty += 1
+                    break
+                if isinstance(v, int) and v > 0:
+                    nonempty += 1
+                    break
+
+    total_files = sum(len(files) for files in discovered_files.values())
+
+    return {
+        "categories": result_categories,
+        "discoveries": discoveries,
+        "cross_references": cross_refs,
+        "discovered_files": discovered_files,
+        "file_count": total_files,
+        "category_count": nonempty,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -999,141 +1166,19 @@ def get_project_intel(
     else:
         scope_path = None
 
-    # Determine which categories to process
+    # Determine which categories to process, then delegate to the internal
+    # entry point over the already-loaded index.
     cats = list(_VALID_CATEGORIES - {"all"}) if category == "all" else [category]
-
-    # Phase 1: Discover intel files from filesystem
-    fs_cats = {"infra", "ci", "config", "deps"}
-    need_fs = bool(fs_cats & set(cats))
-    discovered_files = (
-        _discover_intel_files(source_root, scope=scope_path) if need_fs else {}
-    )
-
-    # Phase 2: Parse discovered files
-    result_categories: dict = {}
-
-    if "infra" in cats:
-        dockerfiles = []
-        compose_services = []
-        k8s_resources = []
-
-        for fpath in discovered_files.get("infra", []):
-            content = _safe_read(fpath)
-            if content is None:
-                continue
-            rel = os.path.relpath(fpath, source_root).replace("\\", "/")
-            fname = os.path.basename(fpath).lower()
-
-            if fname == "dockerfile" or fname.startswith("dockerfile.") or fname.endswith(".dockerfile"):
-                dockerfiles.append(_parse_dockerfile(content, rel))
-            elif fname in ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"):
-                compose_services.extend(_parse_compose(content, rel))
-            else:
-                # Potential K8s manifest
-                resources = _parse_k8s_manifest(content, rel)
-                k8s_resources.extend(resources)
-
-        # Also pull Terraform from index
-        tf_data = _collect_infra_from_index(index)
-
-        result_categories["infra"] = {
-            "dockerfiles": dockerfiles,
-            "compose_services": compose_services,
-            "k8s_resources": k8s_resources[:_MAX_ITEMS_PER_CATEGORY],
-            "terraform": tf_data.get("terraform", []),
-        }
-
-    if "ci" in cats:
-        pipelines = []
-        for fpath in discovered_files.get("ci", []):
-            content = _safe_read(fpath)
-            if content is None:
-                continue
-            rel = os.path.relpath(fpath, source_root).replace("\\", "/")
-
-            if ".github/workflows" in rel.replace("\\", "/"):
-                pipelines.append(_parse_github_actions(content, rel))
-            elif ".gitlab-ci" in os.path.basename(fpath).lower():
-                pipelines.append(_parse_gitlab_ci(content, rel))
-            elif ".circleci" in rel.replace("\\", "/"):
-                pipelines.append(_parse_circleci(content, rel))
-
-        result_categories["ci"] = {"pipelines": pipelines}
-
-    if "config" in cats:
-        env_vars: list[dict] = []
-        for fpath in discovered_files.get("config", []):
-            content = _safe_read(fpath)
-            if content is None:
-                continue
-            rel = os.path.relpath(fpath, source_root).replace("\\", "/")
-            parsed = _parse_env_template(content, rel)
-            for v in parsed:
-                v["source"] = rel
-            env_vars.extend(parsed)
-
-        result_categories["config"] = {"env_vars": env_vars[:_MAX_ITEMS_PER_CATEGORY]}
-
-    if "deps" in cats:
-        scripts: list[dict] = []
-        for fpath in discovered_files.get("deps", []):
-            content = _safe_read(fpath)
-            if content is None:
-                continue
-            rel = os.path.relpath(fpath, source_root).replace("\\", "/")
-            fname = os.path.basename(fpath).lower()
-
-            if fname == "package.json":
-                scripts.extend(_parse_package_scripts(content, rel))
-            elif fname in ("makefile", "gnumakefile"):
-                scripts.extend(_parse_makefile(content, rel))
-            elif fname == "pyproject.toml":
-                scripts.extend(_parse_pyproject_scripts(content, rel))
-
-        result_categories["deps"] = {"scripts": scripts[:_MAX_ITEMS_PER_CATEGORY]}
-
-    if "api" in cats:
-        result_categories["api"] = _collect_api_intel(index)
-
-    if "data" in cats:
-        result_categories["data"] = _collect_data_intel(index)
-
-    # Phase 3: Cross-reference
-    # Build a unified discoveries dict for cross-ref builder
-    discoveries = {}
-    if "infra" in result_categories:
-        discoveries["infra"] = result_categories["infra"]
-    if "ci" in result_categories:
-        discoveries["ci"] = result_categories["ci"]
-    if "config" in result_categories:
-        discoveries["config"] = result_categories["config"]
-    if "deps" in result_categories:
-        discoveries["deps"] = result_categories["deps"]
-
-    cross_refs = _build_cross_references(discoveries, index) if discoveries else []
-
-    # Count categories with actual data
-    nonempty = 0
-    for cat_data in result_categories.values():
-        if isinstance(cat_data, dict):
-            for v in cat_data.values():
-                if isinstance(v, list) and v:
-                    nonempty += 1
-                    break
-                if isinstance(v, int) and v > 0:
-                    nonempty += 1
-                    break
-
-    total_files = sum(len(files) for files in discovered_files.values())
+    collected = collect_project_intel(index, source_root, cats=cats, scope_path=scope_path)
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
     response: dict = {
         "repo": f"{owner}/{name}",
-        "categories": result_categories,
-        "cross_references": cross_refs,
-        "file_count": total_files,
-        "category_count": nonempty,
+        "categories": collected["categories"],
+        "cross_references": collected["cross_references"],
+        "file_count": collected["file_count"],
+        "category_count": collected["category_count"],
         "_meta": {
             "timing_ms": elapsed_ms,
             "source_root": source_root,

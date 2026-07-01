@@ -575,6 +575,7 @@ _COMPACT_STRIP_PARAMS: dict[str, set[str]] = {
     "get_context_bundle": {"budget_strategy"},
     "get_ranked_context": {"detail_level"},
     "get_blast_radius": {"cross_repo", "max_depth"},
+    "get_endpoint_impact": {"include_infra"},
     "find_importers": {"cross_repo"},
     "get_dependency_graph": {"cross_repo"},
     "index_repo": {"extra_ignore_patterns", "incremental"},
@@ -3487,6 +3488,11 @@ def _build_tools_list() -> list[Tool]:
                         "description": "Call-graph hops for caller detection (0 disables; max 3).",
                         "default": 2,
                     },
+                    "include_infra": {
+                        "type": "boolean",
+                        "description": "Attach per-impact infra links: env vars / compose services / Dockerfiles / CI jobs / scripts whose project-intel cross-references land in the endpoint's blast-radius files. File-granular evidence.",
+                        "default": False,
+                    },
                 },
                 "required": ["repo"],
             },
@@ -5234,6 +5240,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                     handler_symbol_id=arguments.get("handler_symbol_id"),
                     depth=arguments.get("depth", 1),
                     call_depth=arguments.get("call_depth", 2),
+                    include_infra=arguments.get("include_infra", False),
                     storage_path=storage_path,
                 )
             )

@@ -178,12 +178,92 @@ def _impact_for_handler(
     }
 
 
+def _norm_rel(p: str) -> str:
+    """Normalize an index-relative file path for set membership."""
+    p = (p or "").replace("\\", "/")
+    if p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def _classify_cross_ref_source(source: str) -> tuple:
+    """Derive (category, label) from a project-intel cross-ref ``source`` string.
+
+    Shapes emitted by ``_build_cross_references``: ``env:<VAR>``,
+    ``compose:<svc>``, ``ci:<file>:<job>``, ``script:<target>``, and Dockerfile
+    ``<rel>:ENTRYPOINT`` / ``<rel>:COPY``.
+    """
+    for prefix in ("env", "compose", "ci", "script"):
+        if source.startswith(prefix + ":"):
+            return prefix, source[len(prefix) + 1:]
+    if source.endswith(":ENTRYPOINT") or source.endswith(":COPY"):
+        return "docker", source
+    return "other", source
+
+
+def _downstream_item(cr: dict) -> dict:
+    cat, label = _classify_cross_ref_source(cr.get("source", ""))
+    return {
+        "category": cat,
+        "label": label,
+        "source": cr.get("source"),
+        "target_file": cr.get("target_file"),
+        "type": cr.get("type"),
+    }
+
+
+def _infra_for_impact(impact: dict, cross_refs: list) -> dict:
+    """Intersect project-intel cross-refs against one impact's blast-radius files.
+
+    Downstream links are file-granular (a cross-ref names a file the endpoint's
+    blast radius contains, not a specific symbol); the ``source``/``type``
+    fields carry that evidence granularity honestly. A COPY/build_context
+    cross-ref targets a DIRECTORY, so prefix matches count too.
+    """
+    blast: set = set()
+    handler_file = (impact.get("handler") or {}).get("file")
+    if handler_file:
+        blast.add(_norm_rel(handler_file))
+    for f in impact.get("affected_files", []):
+        blast.add(_norm_rel(f))
+    for v in impact.get("rendered_views", []):
+        if v.get("file"):
+            blast.add(_norm_rel(v["file"]))
+    blast.discard("")
+
+    downstream: list = []
+    seen: set = set()
+    for cr in cross_refs:
+        target = _norm_rel(cr.get("target_file", ""))
+        if not target:
+            continue
+        hit = target in blast or any(b.startswith(target + "/") for b in blast)
+        if not hit:
+            continue
+        item = _downstream_item(cr)
+        key = (item["category"], item["label"])
+        if key in seen:
+            continue
+        seen.add(key)
+        downstream.append(item)
+
+    return {
+        "downstream": downstream,
+        "exposes": [],  # upstream fusion (compose ports / K8s Service+Ingress) is P2
+        "_meta": {
+            "cross_refs_scanned": len(cross_refs),
+            "blast_radius_files": len(blast),
+        },
+    }
+
+
 def get_endpoint_impact(
     repo: str,
     endpoint: Optional[str] = None,
     handler_symbol_id: Optional[str] = None,
     depth: int = 1,
     call_depth: int = 2,
+    include_infra: bool = False,
     storage_path: Optional[str] = None,
 ) -> dict:
     """Endpoint-centric impact analysis. Read-only.
@@ -198,6 +278,12 @@ def get_endpoint_impact(
                            resolvable, e.g. prefixed FastAPI/Spring routes).
         depth:             Import hops for blast radius (1 = direct importers).
         call_depth:        Call-graph hops for caller detection (0 disables).
+        include_infra:     Attach an ``infra`` block per impact: project-intel
+                           cross-references (env vars, compose services,
+                           Dockerfiles, CI jobs, scripts) intersected against
+                           the endpoint's blast-radius file set. File-granular
+                           evidence, honestly labelled. Default off = output
+                           identical to prior releases.
         storage_path:      Custom storage path.
 
     Returns:
@@ -271,6 +357,28 @@ def get_endpoint_impact(
             repo, e, render_edges, depth=depth, call_depth=call_depth,
             storage_path=storage_path,
         ))
+
+    if include_infra:
+        source_root = getattr(index, "source_root", "") or ""
+        import os  # noqa: PLC0415
+        if not os.path.isdir(source_root):
+            for imp in impacts:
+                imp["infra"] = {
+                    "downstream": [], "exposes": [],
+                    "_meta": {"reason": "no_local_source_root"},
+                }
+        else:
+            from .get_project_intel import collect_project_intel  # noqa: PLC0415
+            try:
+                collected = collect_project_intel(
+                    index, source_root, cats=["infra", "config", "ci", "deps"],
+                )
+                cross_refs = collected["cross_references"]
+            except Exception:  # pragma: no cover - fusion is best-effort
+                logger.debug("collect_project_intel failed", exc_info=True)
+                cross_refs = []
+            for imp in impacts:
+                imp["infra"] = _infra_for_impact(imp, cross_refs)
 
     return {
         "repo": f"{owner}/{name}",
