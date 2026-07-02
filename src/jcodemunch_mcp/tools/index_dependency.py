@@ -1,0 +1,380 @@
+"""Index an installed third-party dependency of an already-indexed repo.
+
+Resolves an npm or PyPI package to the version ACTUALLY INSTALLED in the
+host repo's ``node_modules`` / virtualenv site-packages (the lockfile truth —
+no registry lookup, nothing leaves the machine), copies a filtered snapshot
+into the index store's own ``deps/`` area, and indexes it there as a normal
+queryable local repo.
+
+Why snapshot-then-index instead of indexing in place:
+- a dep path inside a git-identity host's git_root would resolve to the HOST
+  index (or raise IdentityModeConflict) via the contains-path identity match;
+- ``dist``/``build`` are default skip dirs, and compiled npm packages ship
+  only ``dist/`` — the snapshot is indexed via explicit ``paths=`` so its
+  contents always count;
+- pnpm symlink layouts and later version upgrades both fall out naturally
+  (realpath before copy; a new version is a new snapshot dir → new repo id).
+"""
+
+import logging
+import os
+import re
+import shutil
+import time
+from glob import glob
+from pathlib import Path
+from typing import Optional
+
+from ..parser import LANGUAGE_EXTENSIONS, get_language_for_path
+from ..storage import IndexStore
+from .index_folder import index_folder
+from ._utils import resolve_repo
+
+logger = logging.getLogger(__name__)
+
+_VENV_DIR_CANDIDATES = (".venv", "venv", "env")
+_SKIP_COPY_DIRS = frozenset({"node_modules", ".git", "__pycache__", ".venv", "venv"})
+_SKIP_COPY_SUFFIXES = (".min.js", ".min.ts", ".bundle.js", ".map", ".pyc", ".pyo")
+_DOC_FILE_RE = re.compile(r"^(readme|changelog|history|license|licence|notice)", re.IGNORECASE)
+_DEFAULT_MAX_FILES = 2000
+
+_THIN_DOCS_NOTE = (
+    "This package ships minimal doc files; symbol signatures and docstrings "
+    "are still indexed and queryable."
+)
+
+
+def _pep503_normalize(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _safe_snapshot_name(name: str, version: str) -> str:
+    safe = name.lstrip("@").replace("/", "__")
+    safe = re.sub(r"[^A-Za-z0-9._@\-]", "_", safe)
+    return f"{safe}@{version or 'unknown'}"
+
+
+def _read_package_json(pkg_dir: Path) -> dict:
+    import json
+    try:
+        return json.loads((pkg_dir / "package.json").read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {}
+
+
+def _resolve_npm(source_root: Path, package: str) -> Optional[dict]:
+    """Locate ``node_modules/<package>`` (scoped names ok, pnpm symlinks followed)."""
+    candidate = source_root / "node_modules" / Path(*package.split("/"))
+    if not candidate.is_dir():
+        return None
+    real = Path(os.path.realpath(candidate))
+    meta = _read_package_json(real)
+    return {
+        "ecosystem": "npm",
+        "name": meta.get("name") or package,
+        "version": str(meta.get("version") or ""),
+        "installed_path": str(real),
+        "resolved_from": str(candidate.relative_to(source_root)).replace("\\", "/"),
+    }
+
+
+def _site_packages_dirs(source_root: Path) -> list[Path]:
+    """Repo-local virtualenv site-packages candidates, Windows + POSIX layouts."""
+    found: list[Path] = []
+    for venv_name in _VENV_DIR_CANDIDATES:
+        venv = source_root / venv_name
+        if not venv.is_dir():
+            continue
+        win = venv / "Lib" / "site-packages"
+        if win.is_dir():
+            found.append(win)
+        for posix in glob(str(venv / "lib" / "python*" / "site-packages")):
+            if Path(posix).is_dir():
+                found.append(Path(posix))
+    return found
+
+
+def _read_metadata_fields(dist_info: Path) -> tuple[str, str, bool]:
+    """(Name, Version, has_long_description) from a dist-info METADATA file."""
+    name, version, has_body = "", "", False
+    try:
+        text = (dist_info / "METADATA").read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return name, version, has_body
+    header, sep, body = text.partition("\n\n")
+    has_body = bool(sep) and len(body.strip()) > 200
+    for line in header.splitlines():
+        if line.startswith("Name:") and not name:
+            name = line[5:].strip()
+        elif line.startswith("Version:") and not version:
+            version = line[8:].strip()
+        elif line.startswith("Description:"):
+            has_body = True
+    return name, version, has_body
+
+
+def _top_levels(dist_info: Path) -> list[str]:
+    try:
+        lines = (dist_info / "top_level.txt").read_text(encoding="utf-8", errors="replace").splitlines()
+        return [ln.strip() for ln in lines if ln.strip()]
+    except Exception:
+        return []
+
+
+def _resolve_pypi(source_root: Path, package: str, looked_in: list) -> Optional[dict]:
+    """Match a distribution (PEP-503 name) or import name in repo-local venvs."""
+    want = _pep503_normalize(package)
+    for sp in _site_packages_dirs(source_root):
+        looked_in.append(str(sp))
+        dist_infos = [Path(p) for p in glob(str(sp / "*.dist-info")) if Path(p).is_dir()]
+        match: Optional[Path] = None
+        for di in dist_infos:
+            dist_name = di.name[: -len(".dist-info")].rsplit("-", 1)[0]
+            if _pep503_normalize(dist_name) == want:
+                match = di
+                break
+        if match is None:
+            # Import-name query ("yaml" for PyYAML): scan top_level.txt files.
+            for di in dist_infos:
+                if package in _top_levels(di):
+                    match = di
+                    break
+        if match is not None:
+            name, version, readme_in_meta = _read_metadata_fields(match)
+            tops = _top_levels(match)
+            pkg_dir: Optional[Path] = None
+            for top in ([package] + tops) if package in tops else (tops or [package]):
+                cand = sp / top
+                if cand.is_dir():
+                    pkg_dir = cand
+                    break
+            if pkg_dir is None:
+                single = [t for t in (tops or [package]) if (sp / f"{t}.py").is_file()]
+                if single:
+                    return {"ecosystem": "pypi", "error": (
+                        f"{name or package!r} is a single-module distribution "
+                        f"({single[0]}.py); module-file dependencies are not "
+                        "supported yet — read it directly instead."
+                    )}
+                return {"ecosystem": "pypi", "error": (
+                    f"Matched distribution {match.name!r} but found no importable "
+                    f"package directory (top_level: {tops or 'missing'})."
+                )}
+            return {
+                "ecosystem": "pypi",
+                "name": name or package,
+                "version": version,
+                "installed_path": str(pkg_dir),
+                "resolved_from": str(sp.relative_to(source_root)).replace("\\", "/"),
+                "readme_in_metadata": readme_in_meta,
+                "additional_top_levels": [t for t in tops if t != pkg_dir.name],
+            }
+        # No dist-info matched; a bare package dir still counts, version unknown.
+        bare = sp / package
+        if bare.is_dir():
+            return {
+                "ecosystem": "pypi", "name": package, "version": "",
+                "installed_path": str(bare),
+                "resolved_from": str(sp.relative_to(source_root)).replace("\\", "/"),
+                "readme_in_metadata": False,
+                "additional_top_levels": [],
+            }
+    return None
+
+
+def _copy_snapshot(src: Path, dest: Path, max_files: int) -> dict:
+    """Copy code + doc files from the installed package into the snapshot dir.
+
+    Returns {code_rels, docs, files_copied, truncated}. We control the
+    contents, so ``dist``/``build`` code survives (indexed later via explicit
+    ``paths=`` which bypasses the walker's dir skips).
+    """
+    code_rels: list[str] = []
+    docs = {"readme": None, "changelog": None, "docs_dir": None}
+    files_copied = 0
+    truncated = False
+
+    for dirpath, dirnames, filenames in os.walk(str(src), followlinks=False):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_COPY_DIRS]
+        rel_dir = os.path.relpath(dirpath, str(src))
+        rel_dir = "" if rel_dir == "." else rel_dir.replace("\\", "/")
+        for fname in sorted(filenames):
+            rel = f"{rel_dir}/{fname}" if rel_dir else fname
+            lower = fname.lower()
+            if lower.endswith(_SKIP_COPY_SUFFIXES):
+                continue
+            is_doc = bool(_DOC_FILE_RE.match(fname)) or (
+                rel_dir.split("/", 1)[0].lower() in ("docs", "doc")
+                and lower.endswith((".md", ".mdx", ".rst", ".txt"))
+            )
+            is_code = (
+                Path(fname).suffix in LANGUAGE_EXTENSIONS
+                or get_language_for_path(fname) is not None
+            )
+            if not (is_doc or is_code):
+                continue
+            if is_code and len(code_rels) >= max_files:
+                truncated = True
+                continue
+            src_file = Path(dirpath) / fname
+            if src_file.is_symlink():
+                continue
+            dest_file = dest / rel
+            try:
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_file, dest_file)
+            except OSError:
+                logger.debug("snapshot copy failed for %s", src_file, exc_info=True)
+                continue
+            files_copied += 1
+            if is_code:
+                code_rels.append(rel)
+            if _DOC_FILE_RE.match(fname):
+                key = ("readme" if lower.startswith("readme")
+                       else "changelog" if lower.startswith(("changelog", "history"))
+                       else None)
+                if key and docs.get(key) is None:
+                    docs[key] = rel
+            if rel_dir.split("/", 1)[0].lower() in ("docs", "doc") and docs["docs_dir"] is None:
+                docs["docs_dir"] = rel_dir.split("/", 1)[0]
+    return {"code_rels": code_rels, "docs": docs,
+            "files_copied": files_copied, "truncated": truncated}
+
+
+def index_dependency(
+    repo: str,
+    package: str,
+    ecosystem: str = "auto",
+    max_files: int = _DEFAULT_MAX_FILES,
+    storage_path: Optional[str] = None,
+) -> dict:
+    """Resolve an installed dependency of ``repo`` and index it locally.
+
+    Args:
+        repo:         Host repository identifier (must be locally indexed —
+                      its source_root anchors the resolution).
+        package:      npm package (``lodash``, ``@tanstack/react-query``) or
+                      PyPI distribution/import name (``requests``, ``yaml``).
+        ecosystem:    ``auto`` (node_modules first, then repo-local venvs),
+                      ``npm``, or ``pypi``.
+        max_files:    Cap on code files copied into the snapshot (default 2000;
+                      truncation is reported, never silent).
+        storage_path: Custom storage path.
+
+    Returns:
+        ``{package, resolved, snapshot_path, indexed_repo, symbol_count,
+        file_count, docs, hint, _meta}`` — or an honest ``{error, looked_in}``
+        when the package isn't installed where we can see it.
+    """
+    start = time.time()
+    if ecosystem not in ("auto", "npm", "pypi"):
+        return {"error": "ecosystem must be one of: auto, npm, pypi"}
+    if not package or not isinstance(package, str):
+        return {"error": "Provide 'package' (npm or PyPI name as installed)."}
+
+    try:
+        owner, name = resolve_repo(repo, storage_path)
+    except Exception as e:
+        return {"error": str(e)}
+    store = IndexStore(base_path=storage_path)
+    index = store.load_index(owner, name)
+    if index is None:
+        return {"error": f"No index found for {repo!r}. Run index_folder first."}
+    source_root = Path(getattr(index, "source_root", "") or "")
+    if not source_root.is_dir():
+        return {"error": (
+            f"{repo!r} has no local source_root; dependency resolution needs a "
+            "locally indexed repo (index_folder)."
+        )}
+
+    looked_in: list = []
+    resolved: Optional[dict] = None
+    if ecosystem in ("auto", "npm"):
+        looked_in.append(str(source_root / "node_modules" / package))
+        resolved = _resolve_npm(source_root, package)
+    if resolved is None and ecosystem in ("auto", "pypi"):
+        resolved = _resolve_pypi(source_root, package, looked_in)
+    if resolved is None:
+        return {
+            "error": (
+                f"{package!r} is not installed where I can see it. Only "
+                "repo-local installs are resolved (node_modules, or a "
+                ".venv/venv/env virtualenv under the repo root)."
+            ),
+            "looked_in": looked_in,
+        }
+    if "error" in resolved:
+        return {"error": resolved["error"], "looked_in": looked_in}
+
+    snapshot_root = store.base_path / "deps"
+    snapshot = snapshot_root / _safe_snapshot_name(resolved["name"], resolved["version"])
+    cache_hit = snapshot.is_dir()
+    if not cache_hit:
+        snapshot.mkdir(parents=True, exist_ok=True)
+    copied = _copy_snapshot(Path(resolved["installed_path"]), snapshot, max_files)
+    if not copied["code_rels"]:
+        return {
+            "error": (
+                f"Resolved {resolved['name']}@{resolved['version'] or '?'} at "
+                f"{resolved['installed_path']} but found no indexable code files."
+            ),
+            "resolved": resolved,
+        }
+
+    result = index_folder(
+        str(snapshot),
+        use_ai_summaries=False,
+        storage_path=storage_path,
+        paths=copied["code_rels"],
+    )
+    if not (isinstance(result, dict) and result.get("success")):
+        return {"error": f"Indexing the snapshot failed: {result}", "resolved": resolved}
+
+    docs = dict(copied["docs"])
+    if resolved.get("readme_in_metadata") is not None:
+        docs["readme_in_metadata"] = resolved.pop("readme_in_metadata")
+    notes: list = []
+    if not docs.get("readme") and not docs.get("readme_in_metadata"):
+        notes.append(_THIN_DOCS_NOTE)
+    if copied["truncated"]:
+        notes.append(f"Snapshot capped at max_files={max_files}; some code files were skipped.")
+    extra_tops = resolved.pop("additional_top_levels", None)
+    if extra_tops:
+        notes.append(f"Distribution ships additional top-level packages not indexed: {extra_tops}.")
+
+    dep_repo = result.get("repo", "")
+    symbol_count = result.get("symbol_count")
+    file_count = result.get("file_count")
+    if symbol_count is None or file_count is None:
+        # Incremental no-change responses omit counts; read them from the store.
+        try:
+            d_owner, d_name = dep_repo.split("/", 1)
+            dep_index = store.load_index(d_owner, d_name)
+            symbol_count = len(getattr(dep_index, "symbols", []) or [])
+            file_count = len(getattr(dep_index, "source_files", {}) or {})
+        except Exception:
+            symbol_count = symbol_count or 0
+            file_count = file_count or len(copied["code_rels"])
+    response = {
+        "package": package,
+        "resolved": resolved,
+        "snapshot_path": str(snapshot),
+        "indexed_repo": dep_repo,
+        "symbol_count": symbol_count,
+        "file_count": file_count,
+        "docs": docs,
+        "hint": (
+            f"Query it like any repo: search_symbols(repo={dep_repo!r}, ...) / "
+            f"get_symbol_source / get_file_outline. Markdown docs in the "
+            f"snapshot can be indexed with jdocmunch index_local."
+        ),
+        "_meta": {
+            "timing_ms": round((time.time() - start) * 1000, 1),
+            "cache_hit": cache_hit,
+            "files_copied": copied["files_copied"],
+            "truncated": copied["truncated"],
+        },
+    }
+    if notes:
+        response["_meta"]["notes"] = notes
+    return response

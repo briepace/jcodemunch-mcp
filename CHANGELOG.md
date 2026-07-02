@@ -2,6 +2,41 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.94] - 2026-07-02 - New tool: index_dependency (index the libraries a repo actually uses)
+
+Agents constantly need API ground truth for third-party libraries, and until
+now the suite only indexed the repo's own code. `index_dependency` resolves an
+npm or PyPI package to the version ACTUALLY INSTALLED in the host repo
+(`node_modules`, or a repo-local `.venv`/`venv`/`env` virtualenv), reads the
+true version from package metadata (no registry lookup, fully local, nothing
+leaves the machine), and indexes it as its own queryable repo in one call.
+
+### Added
+
+- **`index_dependency(repo, package, ecosystem="auto", max_files=2000)`**
+  (standard tier). Resolution: npm (scoped names, pnpm symlink layouts
+  realpath'd, version from `package.json`) and PyPI (PEP-503-normalized
+  `*.dist-info` match, import-name queries via `top_level.txt`, version from
+  `METADATA`). The dependency is snapshot-copied into the index store's own
+  `deps/` area and indexed there via explicit paths, which makes the design
+  safe twice over: a dep path inside a git-identified host can no longer
+  resolve into the HOST index, and compiled npm packages that ship only
+  `dist/` (a default skip directory) still index fully — their `.js` and
+  `.d.ts` API surface counts. Repo id carries the version
+  (`local/<name>@<version>-<hash>`); re-indexing the same version is a cache
+  hit; upgrading creates a fresh snapshot.
+- **Honest reporting throughout:** not-installed errors list every path
+  checked (`looked_in`); single-module distributions are declared unsupported
+  rather than half-indexed; `max_files` truncation, thin-docs packages
+  (README missing — signatures and docstrings still indexed), and PyPI
+  READMEs embedded in dist-info metadata are all surfaced explicitly.
+- Registered across all tool surfaces (canonical names, snippet categories,
+  standard tier, schema + dispatch, config bundles, all_tools); `ecosystem`/
+  `max_files` stripped under compact schemas. Tool count 86 → 87 (full).
+
+No INDEX_VERSION bump. Writes only to the index store's storage directory
+(same as index_folder). New `tests/test_index_dependency.py` (17).
+
 ## [1.108.93] - 2026-07-02 - Upstream exposure links (get_endpoint_impact include_infra exposes)
 
 `get_endpoint_impact(include_infra=True)` now answers the upstream question
