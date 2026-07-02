@@ -229,3 +229,244 @@ def test_default_output_has_no_infra_key(tmp_path):
     assert "error" not in res
     for imp in res["impacts"]:
         assert "infra" not in imp
+
+
+# --- P2: upstream exposes ----------------------------------------------------
+
+def test_k8s_parser_captures_exposure_fields():
+    from jcodemunch_mcp.tools.get_project_intel import _parse_k8s_manifest
+    manifest = (
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "metadata:\n"
+        "  name: api-deploy\n"
+        "spec:\n"
+        "  replicas: 2\n"
+        "  template:\n"
+        "    metadata:\n"
+        "      labels:\n"
+        "        app: myapp\n"
+        "    spec:\n"
+        "      containers:\n"
+        "        - name: api\n"
+        "          image: myapp:latest\n"
+        "---\n"
+        "apiVersion: v1\n"
+        "kind: Service\n"
+        "metadata:\n"
+        "  name: api-svc\n"
+        "spec:\n"
+        "  selector:\n"
+        "    app: myapp\n"
+        "  ports:\n"
+        "    - port: 80\n"
+        "      targetPort: 8000\n"
+        "---\n"
+        "apiVersion: networking.k8s.io/v1\n"
+        "kind: Ingress\n"
+        "metadata:\n"
+        "  name: api-ing\n"
+        "spec:\n"
+        "  rules:\n"
+        "    - host: api.example.com\n"
+        "      http:\n"
+        "        paths:\n"
+        "          - path: /users\n"
+        "            pathType: Prefix\n"
+        "            backend:\n"
+        "              service:\n"
+        "                name: api-svc\n"
+        "                port:\n"
+        "                  number: 80\n"
+    )
+    resources = _parse_k8s_manifest(manifest, "k8s/all.yaml")
+    by_kind = {r["kind"]: r for r in resources}
+    assert by_kind["Deployment"]["labels"] == {"app": "myapp"}
+    assert by_kind["Service"]["selector"] == {"app": "myapp"}
+    assert by_kind["Service"]["ports"] == [80]
+    assert by_kind["Ingress"]["ingress_rules"] == [
+        {"host": "api.example.com", "path": "/users", "service": "api-svc"}]
+
+
+def test_k8s_parser_legacy_ingress_backend():
+    from jcodemunch_mcp.tools.get_project_intel import _parse_k8s_manifest
+    manifest = (
+        "apiVersion: extensions/v1beta1\n"
+        "kind: Ingress\n"
+        "metadata:\n"
+        "  name: legacy-ing\n"
+        "spec:\n"
+        "  rules:\n"
+        "    - http:\n"
+        "        paths:\n"
+        "          - path: /orders\n"
+        "            backend:\n"
+        "              serviceName: orders-svc\n"
+        "              servicePort: 80\n"
+    )
+    resources = _parse_k8s_manifest(manifest, "k8s/ing.yaml")
+    assert resources[0]["ingress_rules"] == [
+        {"host": None, "path": "/orders", "service": "orders-svc"}]
+
+
+def _INFRA_DISC():
+    """Synthetic project-intel infra discoveries: one anchored app + one stranger."""
+    return {
+        "compose_services": [
+            {"name": "api", "image": "myapp:latest", "build_context": "./api",
+             "ports": ["8000:8000"], "env_vars": [], "depends_on": []},
+            {"name": "other", "image": "otherapp:1", "build_context": "./other",
+             "ports": ["9000:9000"], "env_vars": [], "depends_on": []},
+        ],
+        "k8s_resources": [
+            {"file": "k8s/deploy.yaml", "kind": "Deployment", "name": "api-deploy",
+             "namespace": None, "images": ["myapp:v2"], "ports": [8000],
+             "replicas": 2, "labels": {"app": "myapp"}},
+            {"file": "k8s/svc.yaml", "kind": "Service", "name": "api-svc",
+             "namespace": None, "images": [], "ports": [80], "replicas": None,
+             "selector": {"app": "myapp"}},
+            {"file": "k8s/svc.yaml", "kind": "Service", "name": "stranger-svc",
+             "namespace": None, "images": [], "ports": [81], "replicas": None,
+             "selector": {"app": "stranger"}},
+            {"file": "k8s/ing.yaml", "kind": "Ingress", "name": "api-ing",
+             "namespace": None, "images": [], "ports": [], "replicas": None,
+             "ingress_rules": [
+                 {"host": "api.example.com", "path": "/users", "service": "api-svc"},
+                 {"host": "api.example.com", "path": "/", "service": "api-svc"},
+             ]},
+        ],
+    }
+
+
+def test_exposes_compose_anchor_and_k8s_chain():
+    from jcodemunch_mcp.tools.get_endpoint_impact import _exposes_for_impact
+    blast = {"api/app.py", "api/db.py"}
+    exposes = _exposes_for_impact(blast, "/users", _INFRA_DISC())
+    by_kind_label = {(e["kind"], e["label"]): e for e in exposes}
+
+    # compose: only the service whose build_context contains blast files
+    assert ("compose_port", "api") in by_kind_label
+    assert ("compose_port", "other") not in by_kind_label
+    assert by_kind_label[("compose_port", "api")]["precision"] == "host_port"
+
+    # k8s service: selector chain through the image-anchored Deployment
+    assert ("k8s_service", "api-svc") in by_kind_label
+    assert by_kind_label[("k8s_service", "api-svc")]["precision"] == "host_port"
+    # unanchored selector is skipped, not guessed
+    assert ("k8s_service", "stranger-svc") not in by_kind_label
+
+    # ingress: the /users rule names the endpoint -> real endpoint-level link
+    ing = by_kind_label[("k8s_ingress", "api-ing")]
+    assert ing["precision"] == "ingress_path"
+    assert ing["path"] == "/users"
+
+
+def test_exposes_root_path_rule_is_not_ingress_path():
+    from jcodemunch_mcp.tools.get_endpoint_impact import _exposes_for_impact
+    disc = _INFRA_DISC()
+    disc["k8s_resources"][-1]["ingress_rules"] = [
+        {"host": "api.example.com", "path": "/", "service": "api-svc"}]
+    exposes = _exposes_for_impact({"api/app.py"}, "/users", disc)
+    ings = [e for e in exposes if e["kind"] == "k8s_ingress"]
+    # '/' says nothing route-specific; anchored via the service chain -> host_port
+    assert ings and all(e["precision"] == "host_port" for e in ings)
+
+
+def test_exposes_ingress_path_reverse_anchors_backend_service():
+    """A path-matched Ingress rule anchors its backend Service even with no
+    compose/image chain (e.g. k8s-only repo)."""
+    from jcodemunch_mcp.tools.get_endpoint_impact import _exposes_for_impact
+    disc = {
+        "compose_services": [],
+        "k8s_resources": [
+            {"file": "k8s/svc.yaml", "kind": "Service", "name": "api-svc",
+             "namespace": None, "images": [], "ports": [80], "replicas": None,
+             "selector": {"app": "myapp"}},
+            {"file": "k8s/ing.yaml", "kind": "Ingress", "name": "api-ing",
+             "namespace": None, "images": [], "ports": [], "replicas": None,
+             "ingress_rules": [
+                 {"host": None, "path": "/users", "service": "api-svc"}]},
+        ],
+    }
+    exposes = _exposes_for_impact({"app.py"}, "/users", disc)
+    kinds = {(e["kind"], e["precision"]) for e in exposes}
+    assert ("k8s_ingress", "ingress_path") in kinds
+    assert ("k8s_service", "host_port") in kinds
+
+
+def test_exposes_prefix_path_match():
+    from jcodemunch_mcp.tools.get_endpoint_impact import _exposes_for_impact
+    disc = {"compose_services": [], "k8s_resources": [
+        {"file": "k8s/ing.yaml", "kind": "Ingress", "name": "api-ing",
+         "namespace": None, "images": [], "ports": [], "replicas": None,
+         "ingress_rules": [{"host": None, "path": "/api", "service": None}]},
+    ]}
+    exposes = _exposes_for_impact({"app.py"}, "/api/users", disc)
+    assert exposes and exposes[0]["precision"] == "ingress_path"
+    # unrelated endpoint does not match
+    assert _exposes_for_impact({"app.py"}, "/health", disc) == []
+
+
+def test_compose_ports_exposed_end_to_end(tmp_path):
+    repo, store = _compose_subdir_repo(tmp_path)
+    res = get_endpoint_impact(repo, endpoint="GET /orders", include_infra=True,
+                              storage_path=store)
+    assert "error" not in res
+    infra = res["impacts"][0]["infra"]
+    compose_rows = [e for e in infra["exposes"] if e["kind"] == "compose_port"]
+    assert compose_rows, infra
+    assert compose_rows[0]["label"] == "api"
+    assert compose_rows[0]["ports"] == ["8000:8000"]
+    assert compose_rows[0]["precision"] == "host_port"
+    assert "honest_note" in infra["_meta"]
+
+
+def test_ingress_path_exposed_end_to_end(tmp_path):
+    src = tmp_path / "src"
+    store = tmp_path / "store"
+    k8s = src / "k8s"
+    k8s.mkdir(parents=True)
+    store.mkdir()
+    (src / "app.py").write_text(
+        "from flask import Flask\n"
+        "app = Flask(__name__)\n\n"
+        "@app.get('/users')\n"
+        "def list_users():\n"
+        "    return []\n"
+    )
+    (k8s / "ingress.yaml").write_text(
+        "apiVersion: networking.k8s.io/v1\n"
+        "kind: Ingress\n"
+        "metadata:\n"
+        "  name: api-ing\n"
+        "spec:\n"
+        "  rules:\n"
+        "    - host: api.example.com\n"
+        "      http:\n"
+        "        paths:\n"
+        "          - path: /users\n"
+        "            pathType: Prefix\n"
+        "            backend:\n"
+        "              service:\n"
+        "                name: api-svc\n"
+        "                port:\n"
+        "                  number: 80\n"
+    )
+    repo, store = _index(src, store)
+    res = get_endpoint_impact(repo, endpoint="GET /users", include_infra=True,
+                              storage_path=store)
+    assert "error" not in res
+    infra = res["impacts"][0]["infra"]
+    ings = [e for e in infra["exposes"] if e["kind"] == "k8s_ingress"]
+    assert ings, infra
+    assert ings[0]["precision"] == "ingress_path"
+    assert ings[0]["host"] == "api.example.com"
+
+
+def test_no_exposes_means_no_honest_note(tmp_path):
+    repo, store = _plain_repo(tmp_path)
+    res = get_endpoint_impact(repo, endpoint="GET /ping", include_infra=True,
+                              storage_path=store)
+    infra = res["impacts"][0]["infra"]
+    assert infra["exposes"] == []
+    assert "honest_note" not in infra["_meta"]

@@ -374,6 +374,40 @@ def _parse_k8s_from_docs(docs: list, rel_path: str) -> list[dict]:
                         if isinstance(p, dict) and "containerPort" in p:
                             ports.append(p["containerPort"])
 
+        # Kind-specific exposure fields (keys present only when non-empty).
+        extra: dict = {}
+        if kind == "Service":
+            svc_ports = [p["port"] for p in (spec.get("ports") or [])
+                         if isinstance(p, dict) and "port" in p]
+            if svc_ports:
+                ports = svc_ports
+            selector = spec.get("selector")
+            if isinstance(selector, dict) and selector:
+                extra["selector"] = {str(k): str(v) for k, v in list(selector.items())[:10]}
+        elif kind == "Ingress":
+            rules = []
+            for rule in spec.get("rules") or []:
+                if not isinstance(rule, dict):
+                    continue
+                host = rule.get("host")
+                for p in (rule.get("http") or {}).get("paths") or []:
+                    if not isinstance(p, dict):
+                        continue
+                    backend = p.get("backend") or {}
+                    backend_svc = backend.get("service")
+                    svc_name = backend_svc.get("name") if isinstance(backend_svc, dict) else None
+                    if not svc_name:
+                        svc_name = backend.get("serviceName")  # extensions/v1beta1
+                    rules.append({"host": host, "path": p.get("path"), "service": svc_name})
+            if rules:
+                extra["ingress_rules"] = rules[:20]
+        else:
+            labels = (template.get("metadata") or {}).get("labels")
+            if not (isinstance(labels, dict) and labels):
+                labels = meta.get("labels")  # bare Pod
+            if isinstance(labels, dict) and labels:
+                extra["labels"] = {str(k): str(v) for k, v in list(labels.items())[:10]}
+
         resources.append({
             "file": rel_path,
             "kind": kind,
@@ -382,6 +416,7 @@ def _parse_k8s_from_docs(docs: list, rel_path: str) -> list[dict]:
             "images": images,
             "ports": ports,
             "replicas": replicas,
+            **extra,
         })
     return resources[:_MAX_ITEMS_PER_CATEGORY]
 

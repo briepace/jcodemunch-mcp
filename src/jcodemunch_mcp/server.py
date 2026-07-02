@@ -3490,7 +3490,7 @@ def _build_tools_list() -> list[Tool]:
                     },
                     "include_infra": {
                         "type": "boolean",
-                        "description": "Attach per-impact infra links: env vars / compose services / Dockerfiles / CI jobs / scripts whose project-intel cross-references land in the endpoint's blast-radius files. File-granular evidence.",
+                        "description": "Attach per-impact infra links: env vars / compose services / Dockerfiles / CI jobs / scripts whose project-intel cross-references land in the endpoint's blast-radius files (downstream), plus what exposes the app (compose ports, K8s Service/Ingress; precision host_port unless an Ingress path rule names the route). File-granular evidence.",
                         "default": False,
                     },
                 },

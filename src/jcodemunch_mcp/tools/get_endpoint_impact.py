@@ -212,13 +212,132 @@ def _downstream_item(cr: dict) -> dict:
     }
 
 
-def _infra_for_impact(impact: dict, cross_refs: list) -> dict:
+def _ctx_contains(ctx: str, blast: set) -> bool:
+    """True when a compose build_context directory contains a blast-radius file."""
+    ctx = _norm_rel(ctx).strip("/")
+    if ctx in ("", "."):
+        return True  # repo-root context builds everything
+    return any(b == ctx or b.startswith(ctx + "/") for b in blast)
+
+
+def _image_repo(img: str) -> str:
+    """Image reference without tag/digest, so 'myapp:latest' links to 'myapp:v2'."""
+    img = (img or "").split("@", 1)[0]
+    slash = img.rfind("/")
+    colon = img.rfind(":")
+    if colon > slash:
+        img = img[:colon]
+    return img
+
+
+def _impact_endpoint_path(impact: dict) -> str:
+    """URL path from the impact's 'VERB /path' label ('' when unresolvable)."""
+    parts = (impact.get("endpoint") or "").split(" ", 1)
+    if len(parts) == 2 and parts[1].startswith("/"):
+        return parts[1]
+    return ""
+
+
+def _exposes_for_impact(blast: set, endpoint_path: str, infra: dict) -> list:
+    """Upstream exposure links for one impact, anchored to real evidence only.
+
+    Anchors, strongest first:
+    - compose service whose build_context contains a blast-radius file (its
+      image also anchors K8s workloads by image repository);
+    - Ingress path rule literally naming the endpoint path (the only
+      endpoint-level evidence any manifest encodes -> precision ingress_path);
+    - Service selected into the chain (selector matches an anchored workload's
+      pod labels, or it backs a path-matched Ingress rule).
+    Everything else carries precision host_port: the manifest exposes the app,
+    not this specific route. Ambiguous resources are skipped, not guessed.
+    """
+    exposes: list = []
+    seen: set = set()
+
+    def _emit(item: dict) -> None:
+        key = (item["kind"], item["label"])
+        if key not in seen:
+            seen.add(key)
+            exposes.append(item)
+
+    anchored_images: set = set()
+    for svc in infra.get("compose_services") or []:
+        ctx = svc.get("build_context")
+        if not ctx or not _ctx_contains(ctx, blast):
+            continue
+        if svc.get("image"):
+            anchored_images.add(_image_repo(svc["image"]))
+        if svc.get("ports"):
+            _emit({"kind": "compose_port", "label": svc.get("name", ""),
+                   "ports": svc["ports"], "precision": "host_port"})
+
+    k8s = infra.get("k8s_resources") or []
+    ep = _norm_path(endpoint_path)
+
+    anchored_labels: list = []
+    for res in k8s:
+        if res.get("kind") in ("Service", "Ingress") or not res.get("labels"):
+            continue
+        if any(_image_repo(i) in anchored_images for i in res.get("images") or []):
+            anchored_labels.append(res["labels"])
+
+    path_backends: set = set()
+    ingress_rules: list = []  # (resource, rule, path_matched)
+    for res in k8s:
+        if res.get("kind") != "Ingress":
+            continue
+        for rule in res.get("ingress_rules") or []:
+            rp = _norm_path(rule.get("path") or "")
+            matched = bool(ep) and rp not in ("", "/") and (
+                ep == rp or ep.startswith(rp + "/"))
+            if matched and rule.get("service"):
+                path_backends.add(rule["service"])
+            ingress_rules.append((res, rule, matched))
+
+    anchored_services: set = set(path_backends)
+    for res in k8s:
+        if res.get("kind") != "Service":
+            continue
+        sel = res.get("selector") or {}
+        sel_hit = bool(sel) and any(sel.items() <= lb.items() for lb in anchored_labels)
+        if sel_hit or res.get("name") in path_backends:
+            anchored_services.add(res.get("name"))
+            _emit({"kind": "k8s_service", "label": res.get("name", ""),
+                   "file": res.get("file"), "ports": res.get("ports", []),
+                   "precision": "host_port"})
+
+    # Path-matched rules first so dedupe never downgrades ingress_path.
+    for res, rule, matched in sorted(ingress_rules, key=lambda t: not t[2]):
+        if matched:
+            _emit({"kind": "k8s_ingress", "label": res.get("name", ""),
+                   "file": res.get("file"), "host": rule.get("host"),
+                   "path": rule.get("path"), "precision": "ingress_path"})
+        elif rule.get("service") and rule["service"] in anchored_services:
+            _emit({"kind": "k8s_ingress", "label": res.get("name", ""),
+                   "file": res.get("file"), "host": rule.get("host"),
+                   "path": rule.get("path"), "precision": "host_port"})
+
+    return exposes[:20]
+
+
+_EXPOSES_HONEST_NOTE = (
+    "precision=host_port exposes the app serving this endpoint, not this "
+    "specific route; only ingress_path means the manifest names this path."
+)
+
+
+def _infra_for_impact(
+    impact: dict, cross_refs: list,
+    infra_discoveries: Optional[dict] = None, endpoint_path: str = "",
+) -> dict:
     """Intersect project-intel cross-refs against one impact's blast-radius files.
 
     Downstream links are file-granular (a cross-ref names a file the endpoint's
     blast radius contains, not a specific symbol); the ``source``/``type``
     fields carry that evidence granularity honestly. A COPY/build_context
-    cross-ref targets a DIRECTORY, so prefix matches count too.
+    cross-ref targets a DIRECTORY, so prefix matches count too. When
+    ``infra_discoveries`` (project-intel infra category) is provided, upstream
+    exposure links are fused into ``exposes`` via :func:`_exposes_for_impact`.
     """
     blast: set = set()
     handler_file = (impact.get("handler") or {}).get("file")
@@ -247,14 +366,14 @@ def _infra_for_impact(impact: dict, cross_refs: list) -> dict:
         seen.add(key)
         downstream.append(item)
 
-    return {
-        "downstream": downstream,
-        "exposes": [],  # upstream fusion (compose ports / K8s Service+Ingress) is P2
-        "_meta": {
-            "cross_refs_scanned": len(cross_refs),
-            "blast_radius_files": len(blast),
-        },
+    exposes = _exposes_for_impact(blast, endpoint_path, infra_discoveries or {})
+    meta = {
+        "cross_refs_scanned": len(cross_refs),
+        "blast_radius_files": len(blast),
     }
+    if exposes:
+        meta["honest_note"] = _EXPOSES_HONEST_NOTE
+    return {"downstream": downstream, "exposes": exposes, "_meta": meta}
 
 
 def get_endpoint_impact(
@@ -281,9 +400,13 @@ def get_endpoint_impact(
         include_infra:     Attach an ``infra`` block per impact: project-intel
                            cross-references (env vars, compose services,
                            Dockerfiles, CI jobs, scripts) intersected against
-                           the endpoint's blast-radius file set. File-granular
-                           evidence, honestly labelled. Default off = output
-                           identical to prior releases.
+                           the endpoint's blast-radius file set (downstream),
+                           plus what exposes the app serving the endpoint
+                           (compose ports, K8s Service/Ingress) with explicit
+                           precision - host_port unless an Ingress path rule
+                           literally names the route (ingress_path).
+                           File-granular evidence, honestly labelled. Default
+                           off = output identical to prior releases.
         storage_path:      Custom storage path.
 
     Returns:
@@ -374,11 +497,15 @@ def get_endpoint_impact(
                     index, source_root, cats=["infra", "config", "ci", "deps"],
                 )
                 cross_refs = collected["cross_references"]
+                infra_disc = (collected.get("discoveries") or {}).get("infra") or {}
             except Exception:  # pragma: no cover - fusion is best-effort
                 logger.debug("collect_project_intel failed", exc_info=True)
                 cross_refs = []
+                infra_disc = {}
             for imp in impacts:
-                imp["infra"] = _infra_for_impact(imp, cross_refs)
+                imp["infra"] = _infra_for_impact(
+                    imp, cross_refs, infra_disc, _impact_endpoint_path(imp),
+                )
 
     return {
         "repo": f"{owner}/{name}",

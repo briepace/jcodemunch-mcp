@@ -2,6 +2,44 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.93] - 2026-07-02 - Upstream exposure links (get_endpoint_impact include_infra exposes)
+
+`get_endpoint_impact(include_infra=True)` now answers the upstream question
+alongside v1.108.91's downstream one: **what infrastructure exposes the app
+that serves this endpoint?** The previously empty `infra.exposes[]` list is
+populated with evidence-anchored links, each carrying an explicit `precision`
+field so the tool never claims more than the manifest encodes.
+
+### Added
+
+- **`infra.exposes[]` items** of shape `{kind, label, ports|host|path,
+  precision}`:
+  - `compose_port` — a compose service whose `build_context` contains a
+    blast-radius file and which publishes `ports`;
+  - `k8s_service` — a Service whose selector matches the pod labels of a
+    workload running an anchored image (image linked, tag-insensitively, to a
+    blast-anchored compose service), or that backs a path-matched Ingress rule;
+  - `k8s_ingress` — an Ingress rule routing to an anchored Service, or one
+    whose path rule literally names the resolved endpoint path.
+- **`precision` honesty split**: `ingress_path` is granted ONLY when an
+  Ingress path rule names (equals or prefixes) the endpoint's path — the one
+  manifest construct that encodes a route. Everything else is `host_port`
+  ("exposes the app, not this specific route"). Root `/` path rules never
+  count as `ingress_path`. A `_meta.honest_note` states the semantics whenever
+  `exposes` is non-empty. Ambiguous resources (unmatched selectors, unanchored
+  workloads) are skipped, not guessed.
+- **K8s parser exposure fields** (`get_project_intel`, additive, only when
+  non-empty): Service `selector` + service-level `ports`, Ingress
+  `ingress_rules[]` (`{host, path, service}`, both `networking.k8s.io/v1` and
+  legacy `serviceName` backends), workload pod-template `labels`.
+
+Default `include_infra=False` output remains byte-identical. No new tool
+parameters, no INDEX_VERSION bump, read-only throughout.
+
+New tests in `tests/test_endpoint_infra_impact.py` (9). Files:
+`tools/get_endpoint_impact.py`, `tools/get_project_intel.py`, `server.py`
+(param description only).
+
 ## [1.108.92] - 2026-07-02 - Progress-notification flood control + response drain (#359)
 
 Full-repo `index_folder` over MCP stdio could lose its tool result on large
