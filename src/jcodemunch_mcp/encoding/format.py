@@ -67,11 +67,26 @@ class Legends:
         self._order = [v for v, _ in keepers]
         self._index = {v: i + 1 for i, v in enumerate(self._order)}
 
+    def _escape_literal(self, value: str) -> str:
+        """Escape a verbatim value that starts with the legend prefix.
+
+        A literal value beginning with the prefix (e.g. ``@2x`` asset paths,
+        ``@1.2.3`` version tokens) would otherwise be misread as a legend
+        handle on decode and rewritten to ``legend[N] + suffix`` — silent
+        corruption. Doubling the leading prefix lets ``decode_prefix`` tell an
+        escaped literal (``@@...``) from a real handle (``@<digits>...``);
+        handles never start with ``@@`` because the index is numeric, so the
+        two forms are unambiguous.
+        """
+        if value.startswith(self.prefix):
+            return self.prefix + value
+        return value
+
     def encode(self, value: str) -> str:
         """Return the legend handle if known, else the raw value."""
         if value in self._index:
             return f"{self.prefix}{self._index[value]}"
-        return value
+        return self._escape_literal(value)
 
     def encode_prefix(self, value: str) -> str:
         """Replace a known legend prefix at the start of value."""
@@ -80,7 +95,7 @@ class Legends:
         for v in self._order:
             if value.startswith(v):
                 return f"{self.prefix}{self._index[v]}{value[len(v):]}"
-        return value
+        return self._escape_literal(value)
 
     def write(self) -> str:
         if not self._order:
@@ -108,6 +123,11 @@ class Legends:
     def decode_prefix(self, value: str) -> str:
         if not value or not value.startswith(self.prefix):
             return value
+        # Escaped literal (see _escape_literal): a value that originally started
+        # with the prefix was emitted with a doubled prefix. Strip exactly one
+        # prefix and return it verbatim — it is never a handle.
+        if value.startswith(self.prefix * 2):
+            return value[len(self.prefix):]
         # scan for end of handle (first non-digit after prefix)
         i = len(self.prefix)
         while i < len(value) and value[i].isdigit():

@@ -6194,6 +6194,48 @@ def _resolve_log_config(args) -> "tuple[str, Optional[str]]":
     return str(level_name).upper(), log_file
 
 
+def _resolve_serve_endpoint(args) -> "tuple[str, str, int]":
+    """Resolve (transport, host, port) for `serve` with precedence: an explicit
+    CLI flag, then the env var (JCODEMUNCH_TRANSPORT / _HOST / _PORT), then the
+    persisted config key (transport / host / port), then the hardcoded default.
+
+    Without this, config.jsonc transport/host/port were inert at serve time —
+    argparse read only the env var and the config keys were never consulted, so
+    a client-launched server could not be pointed at a configured endpoint via
+    config alone. An explicit CLI flag or env var from the launching client
+    still wins. The serve argparse defaults are None so an unset flag is
+    distinguishable from a deliberately-passed value."""
+    from . import config as _cfg
+
+    def _as_port(raw) -> "Optional[int]":
+        if raw is None or raw == "":
+            return None
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return None
+
+    transport = (
+        getattr(args, "transport", None)
+        or os.environ.get("JCODEMUNCH_TRANSPORT")
+        or _cfg.get("transport", None)
+        or "stdio"
+    )
+    host = (
+        getattr(args, "host", None)
+        or os.environ.get("JCODEMUNCH_HOST")
+        or _cfg.get("host", None)
+        or "127.0.0.1"
+    )
+    port = (
+        (args.port if getattr(args, "port", None) is not None else None)
+        or _as_port(os.environ.get("JCODEMUNCH_PORT"))
+        or _as_port(_cfg.get("port", None))
+        or 8901
+    )
+    return str(transport), str(host), int(port)
+
+
 def _setup_logging(args) -> None:
     """Configure logging from CLI args / env / config (see _resolve_log_config)."""
     level_name, log_file = _resolve_log_config(args)
@@ -6936,22 +6978,25 @@ def main(argv: Optional[list[str]] = None):
 
     # --- serve (default when no subcommand given) ---
     serve_parser = subparsers.add_parser("serve", help="Run the MCP server (default)")
+    # Defaults are None so _resolve_serve_endpoint can apply the full precedence
+    # (CLI flag > env var > config key > hardcoded default). An unset flag must
+    # be distinguishable from a deliberately-passed value.
     serve_parser.add_argument(
         "--transport",
-        default=os.environ.get("JCODEMUNCH_TRANSPORT", "stdio"),
+        default=None,
         choices=["stdio", "sse", "streamable-http"],
-        help="Transport mode: stdio (default), sse, or streamable-http (also via JCODEMUNCH_TRANSPORT env var)",
+        help="Transport mode: stdio (default), sse, or streamable-http (also via JCODEMUNCH_TRANSPORT env var or the `transport` config key)",
     )
     serve_parser.add_argument(
         "--host",
-        default=os.environ.get("JCODEMUNCH_HOST", "127.0.0.1"),
-        help="Host to bind to in HTTP transport mode (also via JCODEMUNCH_HOST env var, default: 127.0.0.1)",
+        default=None,
+        help="Host to bind to in HTTP transport mode (also via JCODEMUNCH_HOST env var or the `host` config key, default: 127.0.0.1)",
     )
     serve_parser.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("JCODEMUNCH_PORT", "8901")),
-        help="Port to listen on in HTTP transport mode (also via JCODEMUNCH_PORT env var, default: 8901)",
+        default=None,
+        help="Port to listen on in HTTP transport mode (also via JCODEMUNCH_PORT env var or the `port` config key, default: 8901)",
     )
     _add_common_args(serve_parser)
 
@@ -8611,6 +8656,10 @@ def main(argv: Optional[list[str]] = None):
         if args.freshness_mode is None:
             args.freshness_mode = config_module.get("freshness_mode", "relaxed")
         set_freshness_mode(args.freshness_mode)
+        # Resolve transport/host/port with CLI > env > config > default so the
+        # config.jsonc keys are honored at serve time (V11). Applies to both the
+        # watcher and non-watcher dispatch branches below.
+        args.transport, args.host, args.port = _resolve_serve_endpoint(args)
         watcher_enabled = _get_watcher_enabled(args)
         watcher_from_cli = getattr(args, "watcher", None) is not None
 

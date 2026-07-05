@@ -2,6 +2,38 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.98] - 2026-07-05 - Audit P2 batch 1: config keys honored at serve; MUNCH legend no longer corrupts `@digit` values
+
+### Fixed
+
+- **`identity_mode` config key is now honored** (was silently dropped at load).
+  It was absent from `CONFIG_TYPES` (and `DEFAULTS`), so `load_config` /
+  `load_project_config` discarded it as an unknown key — a user who set
+  `"identity_mode": "local"` in `config.jsonc` got the `git_root_identity`
+  fallback instead (the opposite of the request). Added to `CONFIG_TYPES` and
+  `DEFAULTS`; `storage/git_root.py` already reads it.
+
+- **`transport` / `host` / `port` config keys now take effect at serve time.**
+  `serve` read these only from the CLI flag or env var; the config keys were
+  loaded and shown by `config` but never consulted when binding, so a
+  config-only `port` was inert. New `_resolve_serve_endpoint()` applies the
+  precedence **CLI flag > env var > config key > hardcoded default** (mirroring
+  the v1.108.64 logging fix); the serve argparse defaults are now `None` so an
+  unset flag is distinguishable from a deliberately-passed value. As a
+  side-benefit, a malformed `JCODEMUNCH_PORT` no longer crashes the whole CLI
+  at parser-build time — it falls through to the config/default tier.
+
+- **MUNCH generic legend no longer corrupts string values that start with the
+  prefix + a digit.** `encode_prefix` left a literal like `@2x` (retina asset
+  path) or `@1.2.3` (version token) verbatim, but `decode_prefix` expanded any
+  `@<digits>` token to `legend[N] + suffix` — silent, undetectable corruption
+  of returned file paths / symbol names for any generic-encoded tool. Such
+  literals are now escaped (leading prefix doubled) on encode and unescaped on
+  decode; real legend handles never start with `@@` (the index is numeric), so
+  the two forms are unambiguous. New round-trip regression in
+  `tests/encoding/test_format.py`. No `INDEX_VERSION` bump (response-time
+  encoding).
+
 ## [1.108.97] - 2026-07-05 - Security: explicit-paths refuses credential/binary files; get_repo_outline compact encoding no longer drops data; network-disclosure accuracy
 
 ### Fixed
